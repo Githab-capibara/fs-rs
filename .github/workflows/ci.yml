@@ -10,6 +10,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # The Ghostty VT engine that `egui_tty` embeds is built by `zig build`, so
+  # every job that compiles the workspace installs the pinned toolchain first.
+  # The version is the one the vendored ghostty source is known to build with.
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -23,6 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
       - run: rustup component add clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -31,6 +38,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.15.2
       - run: cargo test --workspace
         # The integration tests that need a running agent or a running decision
         # model skip themselves when it is absent, so the suite stays green on
