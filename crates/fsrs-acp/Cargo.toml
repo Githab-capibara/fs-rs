@@ -14,7 +14,6 @@ anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
 tokio.workspace = true
 agent-client-protocol = { version = "5.0.0", features = ["process"] }
 portable-pty = "0.9"

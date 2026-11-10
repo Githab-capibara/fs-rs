@@ -442,18 +442,23 @@ pub fn now_seconds() -> git2::Time {
 
 /// Split a commit message into its summary line and the remaining body.
 pub fn split_message(message: &str) -> (String, String) {
-    let trimmed = message.trim_start_matches(['\n', '\r']);
-    match trimmed.split_once("\n\n") {
-        Some((summary, body)) => (summary.trim().to_string(), body.trim().to_string()),
-        None => {
-            let first_line = trimmed
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .to_string();
-            (first_line, String::new())
+    // Strip leading newlines and carriage returns; then normalise every `\r\n`
+    // to `\n` so that a commit whose body begins with `\r\n\r\n` is separated
+    // at exactly the same point as one whose separator is `\n\n`.
+    let message = message.trim_start_matches(['\n', '\r']);
+    let collapsed = message.replace("\r\n", "\n");
+    match collapsed.split_once('\n') {
+        Some((summary, rest)) if rest.starts_with('\n') => {
+            // Two or more consecutive newlines separate summary from body.
+            let body = rest[1..].trim().to_string();
+            (summary.trim().to_string(), body)
         }
+        Some((first_line, _rest)) => {
+            // A single newline exists but is not followed by another — treat the
+            // whole thing as the summary and return an empty body.
+            (first_line.trim().to_string(), String::new())
+        }
+        None => (collapsed.trim().to_string(), String::new()),
     }
 }
 
@@ -479,5 +484,21 @@ mod tests {
     fn split_message_handles_leading_newlines() {
         let (summary, _) = split_message("\n\nTitle\n");
         assert_eq!(summary, "Title");
+    }
+
+    #[test]
+    fn split_message_handles_crlf_separators() {
+        // A commit whose message uses Windows line endings must still separate
+        // summary from body.
+        let (summary, body) = split_message("fix crash\r\n\r\nDetails here\nmore");
+        assert_eq!(summary, "fix crash");
+        assert_eq!(body, "Details here\nmore");
+    }
+
+    #[test]
+    fn split_message_with_only_crlf_summary_no_body() {
+        let (summary, body) = split_message("only title\r\nnext line");
+        assert_eq!(summary, "only title");
+        assert!(body.is_empty());
     }
 }

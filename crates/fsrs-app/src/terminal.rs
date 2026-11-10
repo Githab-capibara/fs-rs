@@ -150,6 +150,20 @@ impl std::fmt::Debug for TerminalPanel {
     }
 }
 
+impl Drop for TerminalPanel {
+    /// Terminate the child process when the panel is dropped.
+    ///
+    /// Without this the child becomes a zombie: its entry remains in the
+    /// process table and the reader thread on the master side never sees the
+    /// end-of-file that triggers its exit.
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// Errors raised while starting a terminal.
 #[derive(Debug, thiserror::Error)]
 pub enum TerminalError {

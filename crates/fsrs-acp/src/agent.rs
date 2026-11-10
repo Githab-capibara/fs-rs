@@ -640,11 +640,26 @@ fn is_allowed(roots: &[PathBuf], path: &Path) -> bool {
     if roots.is_empty() {
         return false;
     }
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    roots.iter().any(|root| {
-        let root = root.canonicalize().unwrap_or_else(|_| root.clone());
-        canonical.starts_with(&root)
-    })
+    // Canonicalise both sides when possible; fall back to the current working
+    // directory instead of the raw relative path, which could escape the root
+    // via ".." on a non-existent path.
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => std::env::current_dir()
+            .ok()
+            .and_then(|cwd| cwd.join(path).canonicalize().ok())
+            .unwrap_or_else(|| path.to_path_buf()),
+    };
+    for root in roots {
+        let root = match root.canonicalize() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if canonical.starts_with(&root) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Discover the models an agent offers.
@@ -702,6 +717,7 @@ impl From<AcpError> for agent_client_protocol::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn a_path_inside_a_root_is_allowed() {
@@ -721,6 +737,16 @@ mod tests {
     fn without_roots_nothing_is_allowed() {
         let path = std::env::temp_dir().join("fsrs-test-file.txt");
         assert!(!is_allowed(&[], &path));
+    }
+
+    #[test]
+    fn a_missing_path_does_not_escape_the_root() {
+        // When the path does not exist canonicalise() fails. The fallback must
+        // go through current_dir(), not return the raw relative string, which
+        // could contain '..' segments that slide outside the allowed roots.
+        let root = std::env::temp_dir();
+        let suspicious = PathBuf::from("../fsrs-outside");
+        assert!(!is_allowed(std::slice::from_ref(&root), &suspicious));
     }
 
     #[test]

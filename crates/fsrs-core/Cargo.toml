@@ -13,10 +13,8 @@ anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tracing.workspace = true
 git2 = { version = "0.21", default-features = false }
 rusqlite = { version = "0.41", features = ["bundled"] }
-time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 toml = "0.9"
 
 [dev-dependencies]

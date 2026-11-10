@@ -1436,7 +1436,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -1449,7 +1448,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "tracing",
  "ureq",
 ]
 
@@ -1487,9 +1485,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "time",
  "toml 0.9.12+spec-1.1.0",
- "tracing",
 ]
 
 [[package]]
@@ -4254,7 +4250,6 @@ checksum = "e7be76686bdf7198002062423ca0d8cf9b75a27c8e1de804513b97e97b555d9d"
 dependencies = [
  "base64",
  "cookie_store",
- "flate2",
  "log",
  "percent-encoding",
  "serde",
