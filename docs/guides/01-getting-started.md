@@ -3,6 +3,8 @@
 ## What you need
 
 * Rust 1.88 or newer,
+* **zig 0.15.2** — the terminal panel embeds the Ghostty VT engine, and
+  `libghostty-vt-sys` builds it with `zig build`. The build fails without it,
 * a working copy of a fork and the address of its upstream project,
 * the local decision model running on `127.0.0.1:8089` — see
   [the guide about the decision model](03-local-decision-model.md),

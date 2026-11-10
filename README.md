@@ -111,13 +111,17 @@ The full report, with every commit, is in the
 
 ## Build
 
+Rust 1.88 or newer, and **zig 0.15.2**: the terminal panel renders its output
+with the Ghostty VT engine, and `libghostty-vt-sys` builds that engine with
+`zig build`. Without it the workspace does not compile — the runner of the CI
+installs zig for exactly this reason.
+
 ```bash
 cargo build --release
 cargo run -p fsrs-app
 ```
 
-Rust 1.88 or newer. The build is offline-friendly once the dependencies are
-cached:
+The build is offline-friendly once the dependencies are cached:
 
 ```bash
 cargo build --release --offline
@@ -153,6 +157,10 @@ every pull request:
 | Tests | `cargo test --workspace` |
 | Documentation | `python3 scripts/verify-docs.py` |
 | cargo-deny | [`deny.toml`](deny.toml): the licences, the advisories, the duplicate versions and the sources of the dependency tree |
+
+The jobs that compile the workspace install zig 0.15.2 first: the terminal
+panel renders its output with the Ghostty VT engine, which
+`libghostty-vt-sys` builds with `zig build`.
 
 The allow list of `deny.toml` is audited against `cargo metadata`: copyleft
 and unlicensed crates fail the build. The three `unmaintained` advisories of

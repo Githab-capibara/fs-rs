@@ -66,5 +66,9 @@ request.
 | Documentation | `python3 scripts/verify-docs.py` |
 | cargo-deny | the licences, the advisories, the duplicate versions and the sources of the dependency tree |
 
+The jobs that compile the workspace install zig 0.15.2 first, because the
+terminal panel renders its output with the Ghostty VT engine, which
+`libghostty-vt-sys` builds with `zig build`.
+
 A green build is the state the project is kept in: `cargo fmt`, `cargo clippy`
 and `cargo test` are run before every commit, and the CI makes it public.
