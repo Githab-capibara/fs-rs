@@ -1,0 +1,22 @@
+# The build output of Cargo.
+/target
+**/*.rs.bk
+
+# The local database of the dashboard and the temporary data of the tests.
+*.db
+*.db-shm
+*.db-wal
+
+# The reports of the benchmark that are produced while working.
+/docs/benchmarks/*.local.json
+
+# The archives of the release.
+/*.tar.gz
+/*.AppImage
+
+# The editors and the tools.
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

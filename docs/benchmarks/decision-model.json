@@ -1,0 +1,625 @@
+{
+  "repository": "/home/d/.cache/fsrs/bench-upstream",
+  "revision": "HEAD",
+  "model": "foq",
+  "commits": 60,
+  "failed": 0,
+  "latency_p50_ms": 8876.519,
+  "latency_p95_ms": 26565.835,
+  "latency_mean_ms": 11529.795,
+  "latency_min_ms": 4888.939,
+  "latency_max_ms": 34887.501,
+  "criticality": {
+    "High": 2,
+    "Low": 16,
+    "Medium": 40,
+    "Trivial": 2
+  },
+  "complexity": {
+    "Easy": 45,
+    "Medium": 15
+  },
+  "needs_review": 60,
+  "rows": [
+    {
+      "sha": "39886c0cb34453cda21163df0c0c76fc9c011a21",
+      "summary": "Merge pull request #2219 from tmccombs/release-10.5.2",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.491,
+      "complexity_confidence": 0.688,
+      "needs_review": true,
+      "latency_ms": 8876.519
+    },
+    {
+      "sha": "b2a287b3993768e0ec52f0852916917f23fb2a38",
+      "summary": "v10.5.2 Release",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.482,
+      "complexity_confidence": 0.662,
+      "needs_review": true,
+      "latency_ms": 8413.732
+    },
+    {
+      "sha": "e5849a085aa56ca914333ab226de7a9b4fbfabb2",
+      "summary": "Merge pull request #2093 from sharkdp/dependabot/github_actions/actions/attest-4.2.2",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.458,
+      "complexity_confidence": 0.705,
+      "needs_review": true,
+      "latency_ms": 6000.866
+    },
+    {
+      "sha": "edc62af8ada7409ad7eff5473069382d5f6da6a6",
+      "summary": "docs: update Guix package link",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.375,
+      "complexity_confidence": 0.739,
+      "needs_review": true,
+      "latency_ms": 4888.939
+    },
+    {
+      "sha": "3a8edbecfd8d1f8ffec390cf3993037016d64468",
+      "summary": "Merge pull request #2197 from BTF-Kabir-2020/fix/format-raw-bytes-piped",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.643,
+      "complexity_confidence": 0.361,
+      "needs_review": true,
+      "latency_ms": 14066.438
+    },
+    {
+      "sha": "ef6d6b15f78c279aabd086e3c0167fa97180f7a3",
+      "summary": "Merge pull request #2182 from tmccombs/smart-case-docs",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.446,
+      "complexity_confidence": 0.507,
+      "needs_review": true,
+      "latency_ms": 9400.063
+    },
+    {
+      "sha": "3dcff9289d37a6b7e259098324dbbd60bf72a3b5",
+      "summary": "fix: write raw bytes for piped --format output on unix",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.559,
+      "complexity_confidence": 0.423,
+      "needs_review": true,
+      "latency_ms": 14149.167
+    },
+    {
+      "sha": "4bb679ed874f60a81ceda4e0803d34549fc4ed98",
+      "summary": "Merge pull request #2218 from tmccombs/zsh-fix",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.712,
+      "complexity_confidence": 0.515,
+      "needs_review": true,
+      "latency_ms": 6891.167
+    },
+    {
+      "sha": "b1c6c2e560b82b0ca76f72a649dd33188bdff15e",
+      "summary": "fix: Zsh completion syntax",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.659,
+      "complexity_confidence": 0.609,
+      "needs_review": true,
+      "latency_ms": 7100.295
+    },
+    {
+      "sha": "193d0df1d0ad455e44506953a2cd80428203ff35",
+      "summary": "Merge pull request #2214 from sharkdp/release-10.5.1",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.61,
+      "complexity_confidence": 0.501,
+      "needs_review": true,
+      "latency_ms": 10434.879
+    },
+    {
+      "sha": "23237ea4b099bb8a55c7bd0552fc92e5137678b7",
+      "summary": "v10.5.1 Release",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.616,
+      "complexity_confidence": 0.499,
+      "needs_review": true,
+      "latency_ms": 10450.068
+    },
+    {
+      "sha": "cc4e40fa4e32d61733cd72926e233a3fb6c8d56d",
+      "summary": "Merge pull request #2164 from paoValle/fix/2121-mimalloc-ld-preload",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.363,
+      "complexity_confidence": 0.38,
+      "needs_review": true,
+      "latency_ms": 7124.162
+    },
+    {
+      "sha": "e40fab1fadd1450bac8c57b55eb4c6828b99ca0a",
+      "summary": "Merge pull request #2208 from Duo-ee/fix-2207-verbatim-prefix",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.501,
+      "complexity_confidence": 0.382,
+      "needs_review": true,
+      "latency_ms": 20109.448
+    },
+    {
+      "sha": "4f757533d0b5861a82c24024e4efb450cc6fb5f7",
+      "summary": "Simplify the component walk with join (#2208 review)",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.374,
+      "complexity_confidence": 0.396,
+      "needs_review": true,
+      "latency_ms": 10702.727
+    },
+    {
+      "sha": "d96ed27204480561d07fe78de416bebc7b382845",
+      "summary": "Fix absolute Windows verbatim paths",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.49,
+      "complexity_confidence": 0.4,
+      "needs_review": true,
+      "latency_ms": 20104.533
+    },
+    {
+      "sha": "d44b65565e6ee89ba970d08dc95feabe4bf2096a",
+      "summary": "docs: do not list the targets jemalloc is built for",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.393,
+      "complexity_confidence": 0.427,
+      "needs_review": true,
+      "latency_ms": 6084.645
+    },
+    {
+      "sha": "8b14e8dc5f1bd8c2656d735e80f1e6335b335bbf",
+      "summary": "Merge pull request #2202 from meop/ci/windows-arm64-gnullvm",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.432,
+      "complexity_confidence": 0.415,
+      "needs_review": true,
+      "latency_ms": 9476.866
+    },
+    {
+      "sha": "31f36c873e1065755830f947c05db158348d586d",
+      "summary": "ci: pin setup-msys2 and use bash for the gnullvm linker step",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.39,
+      "complexity_confidence": 0.411,
+      "needs_review": true,
+      "latency_ms": 9429.466
+    },
+    {
+      "sha": "5e10274e350b5c20407dcfa6d42be6971242b377",
+      "summary": "Merge pull request #2191 from tmccombs/pattern-refactor",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.301,
+      "complexity_confidence": 0.375,
+      "needs_review": true,
+      "latency_ms": 34694.246
+    },
+    {
+      "sha": "90f6adad22b745f059e5260a6fd924225e86c334",
+      "summary": "fix: pattern-specific case checking",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.674,
+      "complexity_confidence": 0.511,
+      "needs_review": true,
+      "latency_ms": 14353.182
+    },
+    {
+      "sha": "e0a9ba54583b6cb5f55896626d45dcc79dced521",
+      "summary": "fix: Treat a single \"\" as maching all",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.626,
+      "complexity_confidence": 0.514,
+      "needs_review": true,
+      "latency_ms": 7646.687
+    },
+    {
+      "sha": "19731c10a62812c6a105a4bfbb2a66bcae4f4ca0",
+      "summary": "Remove debug line",
+      "criticality": "Trivial",
+      "complexity": "Easy",
+      "criticality_confidence": 0.431,
+      "complexity_confidence": 0.704,
+      "needs_review": true,
+      "latency_ms": 4935.972
+    },
+    {
+      "sha": "23815624819c77ab665e19c8e6c28bddbcd96e1d",
+      "summary": "refactor: different pattern types",
+      "criticality": "High",
+      "complexity": "Medium",
+      "criticality_confidence": 0.373,
+      "complexity_confidence": 0.378,
+      "needs_review": true,
+      "latency_ms": 34887.501
+    },
+    {
+      "sha": "d920b76d11ee4f73a76d56cb9159121cf4f1c606",
+      "summary": "docs: a preloaded allocator conflicts with the bundled jemalloc",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.407,
+      "complexity_confidence": 0.392,
+      "needs_review": true,
+      "latency_ms": 8739.566
+    },
+    {
+      "sha": "b7a0a29d07c3d0e9e0a41155019acada08831a6c",
+      "summary": "Merge pull request #2203 from tmccombs/changelog-fix",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.505,
+      "complexity_confidence": 0.494,
+      "needs_review": true,
+      "latency_ms": 7428.181
+    },
+    {
+      "sha": "1a07935edccca1f54c53afb827e1935e73a046f1",
+      "summary": "Merge pull request #2178 from ump45nose/zsh-format-option",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.459,
+      "complexity_confidence": 0.564,
+      "needs_review": true,
+      "latency_ms": 7142.109
+    },
+    {
+      "sha": "014b1523953b0067a8c414d97aac13f3744c2dd7",
+      "summary": "Merge upstream/master; drop changelog note for zsh --format",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.407,
+      "complexity_confidence": 0.346,
+      "needs_review": true,
+      "latency_ms": 29468.828
+    },
+    {
+      "sha": "434d80ef92df18e7e7b68c5a6d4501b688bd0567",
+      "summary": "Merge pull request #2146 from sharkdp/dependabot/cargo/test-case-3.4.0",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.389,
+      "complexity_confidence": 0.495,
+      "needs_review": true,
+      "latency_ms": 19086.952
+    },
+    {
+      "sha": "3c784f63b8e7976650682d550926bb79e9e1f640",
+      "summary": "Merge pull request #2193 from NavpreetSSidhu/unrestricted-overrides",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.739,
+      "complexity_confidence": 0.405,
+      "needs_review": true,
+      "latency_ms": 18047.021
+    },
+    {
+      "sha": "22d11e135263621eebd1521f99d54413f8da164e",
+      "summary": "Merge pull request #2162 from ump45nose/completion-no-ignore-parent-desc",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.395,
+      "complexity_confidence": 0.677,
+      "needs_review": true,
+      "latency_ms": 6056.106
+    },
+    {
+      "sha": "87c69e8f9b348b429488d7f07405ab125d6ece42",
+      "summary": "Merge pull request #2157 from ump45nose/doc-no-ignore-typo",
+      "criticality": "Trivial",
+      "complexity": "Easy",
+      "criticality_confidence": 0.355,
+      "complexity_confidence": 0.611,
+      "needs_review": true,
+      "latency_ms": 5849.846
+    },
+    {
+      "sha": "2b9d4cfdc636d428a01ebcef255e4bba8734f950",
+      "summary": "Fix changelog location",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.52,
+      "complexity_confidence": 0.438,
+      "needs_review": true,
+      "latency_ms": 7112.191
+    },
+    {
+      "sha": "afcefdd4edabe1a888e2b5ea7b06b497aac83626",
+      "summary": "Merge pull request #2183 from tmccombs/zsh-updates",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.6,
+      "complexity_confidence": 0.376,
+      "needs_review": true,
+      "latency_ms": 15513.2
+    },
+    {
+      "sha": "4feccf0ae8840cad866647eaf76127bab756ccfd",
+      "summary": "ci: release a Windows ARM64 GNU-family artifact",
+      "criticality": "Low",
+      "complexity": "Medium",
+      "criticality_confidence": 0.33,
+      "complexity_confidence": 0.399,
+      "needs_review": true,
+      "latency_ms": 10639.495
+    },
+    {
+      "sha": "d76b4e3e5b380081f01c4e6c1caaf688038679a9",
+      "summary": "Merge pull request #2196 from parneetsingh022/main",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.527,
+      "complexity_confidence": 0.353,
+      "needs_review": true,
+      "latency_ms": 10659.087
+    },
+    {
+      "sha": "0b3249c58cbc9b980e11ac3781938e9031db1a0a",
+      "summary": "docs: move --size overflow changelog entry to Unreleased section",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.622,
+      "complexity_confidence": 0.466,
+      "needs_review": true,
+      "latency_ms": 7638.015
+    },
+    {
+      "sha": "7c885ef479a3f0c53299b328ad9b65abc3fe8ed3",
+      "summary": "docs: added changelog entry for size filter overflow fix",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.643,
+      "complexity_confidence": 0.48,
+      "needs_review": true,
+      "latency_ms": 6054.066
+    },
+    {
+      "sha": "8b6d754fa7803bd72e4b0c20de48d7fed9805923",
+      "summary": "fix: prevent integer overflow when parsing size filters",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.446,
+      "complexity_confidence": 0.373,
+      "needs_review": true,
+      "latency_ms": 9421.455
+    },
+    {
+      "sha": "cffdbfe8a98f225c4919815d71f44b07454b3994",
+      "summary": "fix: set the -u defaults with default_value_ifs",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.434,
+      "complexity_confidence": 0.394,
+      "needs_review": true,
+      "latency_ms": 14316.524
+    },
+    {
+      "sha": "8e7a1ab6b68ca2ab8164bcac73b58970e7ccb708",
+      "summary": "fix: let --ignore and --no-hidden override only their half of -u",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.683,
+      "complexity_confidence": 0.401,
+      "needs_review": true,
+      "latency_ms": 19241.23
+    },
+    {
+      "sha": "c44735ec0f130c2486afe9c976937c03b57a8c62",
+      "summary": "Merge pull request #2172 from ump45nose/completion-type-dir-alias",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.449,
+      "complexity_confidence": 0.669,
+      "needs_review": true,
+      "latency_ms": 6332.377
+    },
+    {
+      "sha": "08a3a48a5a26302e463a2ccedc61da2598536664",
+      "summary": "Merge pull request #2190 from NavpreetSSidhu/man-type-list-indent",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.374,
+      "complexity_confidence": 0.673,
+      "needs_review": true,
+      "latency_ms": 4929.64
+    },
+    {
+      "sha": "dd7fa4dfe1588e6f10c71df983d98164a500c64b",
+      "summary": "docs: fix spacing of --type values in the man page",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.363,
+      "complexity_confidence": 0.688,
+      "needs_review": true,
+      "latency_ms": 4917.829
+    },
+    {
+      "sha": "e3eead9da73fb6bcc41f692304e3c8f968a3ceb1",
+      "summary": "Merge pull request #2185 from mabunemeh/fix-inline-flags-smart-case",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.58,
+      "complexity_confidence": 0.384,
+      "needs_review": true,
+      "latency_ms": 18170.893
+    },
+    {
+      "sha": "d2061da3894cdf558f5bc24e89e3afa916164b15",
+      "summary": "Use distinct filenames for smart-case regression",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.406,
+      "complexity_confidence": 0.477,
+      "needs_review": true,
+      "latency_ms": 8770.862
+    },
+    {
+      "sha": "0d84807acc1b7683265f7deaf91d8434871eb689",
+      "summary": "Drop changelog entry for zsh completion alias",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.337,
+      "complexity_confidence": 0.562,
+      "needs_review": true,
+      "latency_ms": 5930.81
+    },
+    {
+      "sha": "df2fc81c0a763cec3f276551a83cb58244933e31",
+      "summary": "Update changelog for zsh completion",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.643,
+      "complexity_confidence": 0.441,
+      "needs_review": true,
+      "latency_ms": 5979.361
+    },
+    {
+      "sha": "71899250d8007f797c54458c3d8bfd018d4896d5",
+      "summary": "Add \"dir\" to filetypes in zsh completion",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.548,
+      "complexity_confidence": 0.722,
+      "needs_review": true,
+      "latency_ms": 4959.345
+    },
+    {
+      "sha": "9e904639aee44df4507200cf0ed5e8531e120d6f",
+      "summary": "Merge pull request #2187 from ump45nose/docs/threads-default-cap",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.468,
+      "complexity_confidence": 0.644,
+      "needs_review": true,
+      "latency_ms": 5901.727
+    },
+    {
+      "sha": "d649c3761362bd19dad97cabec8ff746c5703952",
+      "summary": "docs: mention the 64-thread cap in the --threads default",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.594,
+      "complexity_confidence": 0.572,
+      "needs_review": true,
+      "latency_ms": 6023.976
+    },
+    {
+      "sha": "8888f6d9df20c4981bfae2efaec63953ce61f8d4",
+      "summary": "Merge pull request #1739 from adamnemecek/master",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.355,
+      "complexity_confidence": 0.476,
+      "needs_review": true,
+      "latency_ms": 21692.823
+    },
+    {
+      "sha": "e422fc3027e36145174c0964cc4b24d0363388e9",
+      "summary": "Fix smart-case detection with inline case-insensitive flags",
+      "criticality": "Medium",
+      "complexity": "Medium",
+      "criticality_confidence": 0.485,
+      "complexity_confidence": 0.393,
+      "needs_review": true,
+      "latency_ms": 19988.321
+    },
+    {
+      "sha": "d5365d3fa0caafee5a43b5b36ba4de471670aec2",
+      "summary": "Merge branch 'master' into master",
+      "criticality": "High",
+      "complexity": "Medium",
+      "criticality_confidence": 0.318,
+      "complexity_confidence": 0.317,
+      "needs_review": true,
+      "latency_ms": 26565.835
+    },
+    {
+      "sha": "80b135d59d4d304815f4f0c8ef9d58ad880e580a",
+      "summary": "fix[completions]: Update zsh completions",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.599,
+      "complexity_confidence": 0.376,
+      "needs_review": true,
+      "latency_ms": 18409.594
+    },
+    {
+      "sha": "cfed17a2bc4a2a27eeb90932b94f4c5680a78741",
+      "summary": "Merge pull request #2165 from ump45nose/completion-and-takes-a-pattern",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.64,
+      "complexity_confidence": 0.663,
+      "needs_review": true,
+      "latency_ms": 5953.764
+    },
+    {
+      "sha": "c3dccad2456fa56f3371b3db10fb34a1ef8b3e3f",
+      "summary": "Merge pull request #2160 from sharkdp/dependabot/github_actions/actions/upload-artifact-7.0.2",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.605,
+      "complexity_confidence": 0.708,
+      "needs_review": true,
+      "latency_ms": 8596.442
+    },
+    {
+      "sha": "6a62d2e2469a507e3f94959d3ed9d86c707cb5d1",
+      "summary": "docs: Call out smart-case in help and man page",
+      "criticality": "Medium",
+      "complexity": "Easy",
+      "criticality_confidence": 0.556,
+      "complexity_confidence": 0.405,
+      "needs_review": true,
+      "latency_ms": 9512.334
+    },
+    {
+      "sha": "41ee5e954c55dd4b212a7ed2ed7ad6c9779a63b2",
+      "summary": "Merge pull request #2173 from manish-9245/fix/382-filetypes-ctor",
+      "criticality": "Low",
+      "complexity": "Medium",
+      "criticality_confidence": 0.36,
+      "complexity_confidence": 0.487,
+      "needs_review": true,
+      "latency_ms": 14357.493
+    },
+    {
+      "sha": "dbfe46bd1d068a7e5b41086298ce23052c8d521f",
+      "summary": "Merge pull request #2168 from ump45nose/completion-gibibytes",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.394,
+      "complexity_confidence": 0.636,
+      "needs_review": true,
+      "latency_ms": 6128.7
+    },
+    {
+      "sha": "91f5abbfa5064346841421c0f833a222469a7a86",
+      "summary": "Merge pull request #2179 from ump45nose/man-no-ignore-parent",
+      "criticality": "Low",
+      "complexity": "Easy",
+      "criticality_confidence": 0.402,
+      "complexity_confidence": 0.641,
+      "needs_review": true,
+      "latency_ms": 6030.113
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+[package]
+name = "fsrs-acp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Agent Client Protocol client and three-agent implementation pipeline for fs-rs"
+
+[dependencies]
+fsrs-core.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tokio.workspace = true
+agent-client-protocol = { version = "5.0.0", features = ["process"] }
+portable-pty = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

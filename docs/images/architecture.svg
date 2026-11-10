@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 560" width="980" height="560" role="img" aria-label="Architecture of fs-rs: the dashboard, the local decision model, the agent pipeline and the git repositories">
+  <title>Architecture of fs-rs</title>
+  <style>
+    .box      { stroke-width: 1.5; rx: 10; }
+    .title    { font: 600 14px system-ui, sans-serif; fill: #14181d; }
+    .body     { font: 400 11.5px system-ui, sans-serif; fill: #4b5563; }
+    .label    { font: 600 11px system-ui, sans-serif; fill: #374151; }
+    .edge     { stroke: #9aa4b2; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .edge-h   { stroke: #c2410c; stroke-width: 1.6; fill: none; marker-end: url(#arrow-hot); }
+    .edge-lbl { font: 400 10.5px system-ui, sans-serif; fill: #6b7280; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa4b2"/>
+    </marker>
+    <marker id="arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2410c"/>
+    </marker>
+  </defs>
+
+  <rect width="980" height="560" fill="#ffffff"/>
+
+  <!-- The dashboard -->
+  <rect class="box" x="30" y="40" width="300" height="150" fill="#eef2ff" stroke="#6366f1"/>
+  <text class="title" x="50" y="68">fsrs-app — dashboard</text>
+  <text class="body" x="50" y="92">egui / eframe window, UI thread</text>
+  <text class="body" x="50" y="112">• repo strip: path + updates count</text>
+  <text class="body" x="50" y="132">• commit table: criticality | description | complexity</text>
+  <text class="body" x="50" y="152">• model picker → terminal or pipeline</text>
+  <text class="body" x="50" y="174">• bottom log panel</text>
+
+  <!-- The core -->
+  <rect class="box" x="30" y="215" width="300" height="130" fill="#f1f5f9" stroke="#64748b"/>
+  <text class="title" x="50" y="243">fsrs-core — domain</text>
+  <text class="body" x="50" y="267">git2: pending commits, patch, branch, merge</text>
+  <text class="body" x="50" y="287">rusqlite: repos, commits, assessments, runs</text>
+  <text class="body" x="50" y="307">config.toml · domain types · badges</text>
+  <text class="body" x="50" y="327">Store stays on the UI thread</text>
+
+  <!-- The local model -->
+  <rect class="box" x="640" y="40" width="310" height="150" fill="#ecfdf5" stroke="#10b981"/>
+  <text class="title" x="660" y="68">fsrs-ai — local decision model</text>
+  <text class="body" x="660" y="92">Foq 8B (llama-server, CUDA)</text>
+  <text class="body" x="660" y="112">• criticality schema (A…E)</text>
+  <text class="body" x="660" y="132">• complexity schema (A…E)</text>
+  <text class="body" x="660" y="152">• temperature calibration (lora: T=2.6353)</text>
+  <text class="body" x="660" y="174">• prompt fitted to the real context window</text>
+
+  <!-- The pipeline -->
+  <rect class="box" x="390" y="215" width="290" height="200" fill="#fff7ed" stroke="#f97316"/>
+  <text class="title" x="410" y="243">fsrs-acp — agent pipeline</text>
+  <text class="body" x="410" y="267">ACP over stdio (opencode acp)</text>
+  <text class="body" x="410" y="291">1. implementer — ports the commit</text>
+  <text class="body" x="410" y="311">2. reviewer — fast linters + fixes</text>
+  <text class="body" x="410" y="331">3. verifier — approve or reject</text>
+  <text class="body" x="410" y="355">reject → same reviewer session</text>
+  <text class="body" x="410" y="379">approve → fast-forward merge into main</text>
+  <text class="body" x="410" y="399">manual terminal: opencode mini --model</text>
+
+  <!-- The repositories -->
+  <rect class="box" x="30" y="400" width="300" height="130" fill="#f0fdf4" stroke="#22c55e"/>
+  <text class="title" x="50" y="428">fork working copy</text>
+  <text class="body" x="50" y="452">branch fsrs/implement/&lt;sha&gt;</text>
+  <text class="body" x="50" y="472">leftovers committed → merge</text>
+  <text class="body" x="50" y="492">sqlite state in ~/.local/share/fs-rs</text>
+
+  <rect class="box" x="640" y="400" width="310" height="130" fill="#fef2f2" stroke="#ef4444"/>
+  <text class="title" x="660" y="428">upstream remote</text>
+  <text class="body" x="660" y="452">git fetch → refs/remotes/upstream/&lt;main&gt;</text>
+  <text class="body" x="660" y="472">commits reachable upstream, not in the fork</text>
+  <text class="body" x="660" y="492">commit link for every agent prompt</text>
+
+  <!-- Edges -->
+  <path class="edge" d="M 180 190 L 180 215"/>
+  <text class="edge-lbl" x="190" y="207">domain calls</text>
+
+  <path class="edge" d="M 330 280 L 390 280"/>
+  <text class="edge-lbl" x="336" y="272">branch, merge, patch</text>
+
+  <path class="edge-h" d="M 330 120 L 640 120"/>
+  <text class="edge-lbl" x="450" y="112">prompt + log-probabilities (127.0.0.1:8089)</text>
+
+  <path class="edge-h" d="M 680 400 L 680 190"/>
+  <text class="edge-lbl" x="690" y="300">rate criticality / complexity</text>
+
+  <path class="edge" d="M 460 415 L 200 400"/>
+  <text class="edge-lbl" x="250" y="428">agents work in the fork</text>
+
+  <path class="edge" d="M 330 470 L 640 470" stroke-dasharray="5 4"/>
+  <text class="edge-lbl" x="430" y="462">git fetch</text>
+</svg>

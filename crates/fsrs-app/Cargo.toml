@@ -1,0 +1,42 @@
+[package]
+name = "fsrs-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Native dashboard for tracking upstream commits and porting them into forks"
+# `cargo run -p fsrs-app` starts the dashboard, not the test double.
+default-run = "fsrs"
+
+[[bin]]
+name = "fsrs"
+path = "src/main.rs"
+
+# A test double that speaks the Agent Client Protocol. The integration tests
+# of the dashboard start it instead of a real agent.
+[[bin]]
+name = "fsrs-mock-agent"
+path = "src/bin/fsrs-mock-agent.rs"
+
+[dependencies]
+fsrs-core.workspace = true
+fsrs-ai.workspace = true
+fsrs-acp.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wayland", "x11", "wgpu"] }
+egui = "0.36"
+egui_tty = "0.2"
+portable-pty = "0.9"
+
+[dev-dependencies]
+egui_kittest = { version = "0.36.2", features = ["eframe", "snapshot", "wgpu"] }
+tempfile = "3"
+toml = "0.9"
