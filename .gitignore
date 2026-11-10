@@ -20,3 +20,7 @@
 *.swp
 *~
 .DS_Store
+
+# The bytecode of the Python verification script.
+__pycache__/
+*.pyc

@@ -1,8 +1,10 @@
 # fs-rs
 
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![CI](https://github.com/Githab-capibara/fs-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Githab-capibara/fs-rs/actions/workflows/ci.yml)
+[![cargo-deny](https://img.shields.io/badge/cargo--deny-audited-brightgreen?style=flat-square)](deny.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Crates.io](https://img.shields.io/badge/crates.io-fs--rs-orange?style=flat-square)](https://crates.io/)
+[![GitHub](https://img.shields.io/badge/GitHub-Githab--capibara%2Ffs--rs-181717?style=flat-square&logo=github)](https://github.com/Githab-capibara/fs-rs)
 [![OpenCode](https://img.shields.io/badge/agents-OpenCode%20ACP-purple?style=flat-square)](https://opencode.ai/)
 [![Model: Foq](https://img.shields.io/badge/model-Foq%208B%20(local)-green?style=flat-square)](https://github.com/yohanargentina-oss/Foq)
 
@@ -138,6 +140,25 @@ running model skip themselves when it is absent.
 | `crates/fsrs-ai/tests` | The conformance of the prompt, the calibration, the live server |
 | `crates/fsrs-acp/tests` | The pipeline against the mock agent, the live OpenCode agent |
 | `crates/fsrs-app/tests/gui.rs` | The window: the strip, the table, the picker, the pipeline |
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and
+every pull request:
+
+| Job | What it runs |
+|-----|--------------|
+| Rustfmt | `cargo fmt --all --check` |
+| Clippy | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Tests | `cargo test --workspace` |
+| Documentation | `python3 scripts/verify-docs.py` |
+| cargo-deny | [`deny.toml`](deny.toml): the licences, the advisories, the duplicate versions and the sources of the dependency tree |
+
+The allow list of `deny.toml` is audited against `cargo metadata`: copyleft
+and unlicensed crates fail the build. The three `unmaintained` advisories of
+the D-Bus stack of the accessibility layer are ignored with a documented
+reason — they arrive transitively through `eframe` and are notices, not
+vulnerabilities.
 
 ## Screenshot
 

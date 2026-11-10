@@ -50,3 +50,21 @@ python3 scripts/verify-docs.py
 It compares the constants of the code with the text of the documents, checks
 that the links resolve, and — when the decision model is running — compares
 the window of the runtime with the one that the documents name.
+
+## Continuous integration
+
+[`docs`](../.github/workflows/ci.yml) — `.github/workflows/ci.yml` runs
+rustfmt, clippy, the test suite, the verification of this documentation and
+`cargo deny check` against [`deny.toml`](../deny.toml) on every push and pull
+request.
+
+| Job | What it runs |
+|-----|--------------|
+| Rustfmt | `cargo fmt --all --check` |
+| Clippy | `cargo clippy --workspace --all-targets -- -D warnings` |
+| Tests | `cargo test --workspace` |
+| Documentation | `python3 scripts/verify-docs.py` |
+| cargo-deny | the licences, the advisories, the duplicate versions and the sources of the dependency tree |
+
+A green build is the state the project is kept in: `cargo fmt`, `cargo clippy`
+and `cargo test` are run before every commit, and the CI makes it public.
