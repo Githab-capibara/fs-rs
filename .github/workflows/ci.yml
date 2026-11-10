@@ -14,9 +14,11 @@ jobs:
   # every job that compiles the workspace installs the pinned toolchain first.
   # The version is the one the vendored ghostty source is known to build with.
   #
-  # The toolchain is fetched from the official source and not through
-  # `mlugg/setup-zig`: that action asks the mirrors for an index that the
-  # release channel does not publish and fails with a 404.
+  # The toolchain is fetched from the official release channel rather than
+  # through `mlugg/setup-zig`: that action asks the mirrors for an index under
+  # `https://ziglang.org/builds`, which serves only the development channel,
+  # and fails with a 404. The release channel lives under
+  # `https://ziglang.org/download/<version>/`.
 
   fmt:
     name: Rustfmt
@@ -40,8 +42,10 @@ jobs:
             echo "download failed (attempt ${attempt}), retrying"
             sleep 5
           done
-          tar -xJf /tmp/zig.tar.xz -C /usr/local --strip-components=1
-          zig version
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
+          "$HOME/.zig/zig" version
       - run: rustup component add clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -59,8 +63,10 @@ jobs:
             echo "download failed (attempt ${attempt}), retrying"
             sleep 5
           done
-          tar -xJf /tmp/zig.tar.xz -C /usr/local --strip-components=1
-          zig version
+          mkdir -p "$HOME/.zig"
+          tar -xJf /tmp/zig.tar.xz -C "$HOME/.zig" --strip-components=1
+          echo "$HOME/.zig" >> "$GITHUB_PATH"
+          "$HOME/.zig/zig" version
       - run: cargo test --workspace
         # The integration tests that need a running agent or a running decision
         # model skip themselves when it is absent, so the suite stays green on
