@@ -187,6 +187,12 @@ for relative in (
     "docs/images/hero.png",
     "docs/images/architecture.svg",
     "docs/images/benchmark-distribution.svg",
+    "crates/fsrs-core/README.md",
+    "crates/fsrs-ai/README.md",
+    "crates/fsrs-acp/README.md",
+    "crates/fsrs-app/README.md",
+    "deny.toml",
+    ".github/workflows/ci.yml",
 ):
     path = ROOT / relative
     check(

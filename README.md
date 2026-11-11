@@ -140,10 +140,10 @@ running model skip themselves when it is absent.
 
 | Suite | What it covers |
 |-------|----------------|
-| `crates/fsrs-core/tests` | The git layer and the catalogue against real repositories |
-| `crates/fsrs-ai/tests` | The conformance of the prompt, the calibration, the live server |
-| `crates/fsrs-acp/tests` | The pipeline against the mock agent, the live OpenCode agent |
-| `crates/fsrs-app/tests/gui.rs` | The window: the strip, the table, the picker, the pipeline |
+| [`crates/fsrs-core/tests`](crates/fsrs-core/README.md) | The git layer and the catalogue against real repositories |
+| [`crates/fsrs-ai/tests`](crates/fsrs-ai/README.md) | The conformance of the prompt, the calibration, the live server |
+| [`crates/fsrs-acp/tests`](crates/fsrs-acp/README.md) | The pipeline against the mock agent, the live OpenCode agent |
+| [`crates/fsrs-app/tests/gui.rs`](crates/fsrs-app/README.md) | The window: the strip, the table, the picker, the pipeline |
 
 ## Continuous integration
 
@@ -189,10 +189,10 @@ python3 scripts/verify-docs.py
 
 | Crate | Content |
 |-------|---------|
-| [`fsrs-core`](crates/fsrs-core) | The domain: repositories, upstream commits, ratings, runs, the store, the git operations |
-| [`fsrs-ai`](crates/fsrs-ai) | The client of the local Foq model: the schemas, the prompt, the calibration, the accelerators |
-| [`fsrs-acp`](crates/fsrs-acp) | The ACP client, the prompts of the three agents, the pipeline, the mock agent |
-| [`fsrs-app`](crates/fsrs-app) | The egui window, the background worker, the terminal panel |
+| [`fsrs-core`](crates/fsrs-core/README.md) | The domain: repositories, upstream commits, ratings, runs, the store, the git operations |
+| [`fsrs-ai`](crates/fsrs-ai/README.md) | The client of the local Foq model: the schemas, the prompt, the calibration, the accelerators |
+| [`fsrs-acp`](crates/fsrs-acp/README.md) | The ACP client, the prompts of the three agents, the pipeline, the mock agent |
+| [`fsrs-app`](crates/fsrs-app/README.md) | The egui window, the background worker, the terminal panel |
 
 The decisions behind them are recorded in the
 [architecture decision records](docs/adr/README.md):

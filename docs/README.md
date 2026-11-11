@@ -16,10 +16,10 @@ local model, and ports them into the fork with a three-agent pipeline.
 
 | Layer | Crate | Content |
 |-------|-------|---------|
-| Domain | [`fsrs-core`](../crates/fsrs-core) | Repositories, upstream commits, ratings, runs, the store, the git operations |
-| Decision | [`fsrs-ai`](../crates/fsrs-ai) | The client of the local Foq model, the schemas, the calibration, the accelerators |
-| Agents | [`fsrs-acp`](../crates/fsrs-acp) | The Agent Client Protocol client, the prompts, the pipeline, the mock agent |
-| Interface | [`fsrs-app`](../crates/fsrs-app) | The egui window, the background worker, the terminal panel |
+| Domain | [`fsrs-core`](../crates/fsrs-core/README.md) | Repositories, upstream commits, ratings, runs, the store, the git operations |
+| Decision | [`fsrs-ai`](../crates/fsrs-ai/README.md) | The client of the local Foq model, the schemas, the calibration, the accelerators |
+| Agents | [`fsrs-acp`](../crates/fsrs-acp/README.md) | The Agent Client Protocol client, the prompts, the pipeline, the mock agent |
+| Interface | [`fsrs-app`](../crates/fsrs-app/README.md) | The egui window, the background worker, the terminal panel |
 
 ## The documents
 
