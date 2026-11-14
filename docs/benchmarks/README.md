@@ -108,3 +108,47 @@ cargo run -p fsrs-ai --example benchmark -- /tmp/bench-upstream HEAD 60 \
 The absolute numbers depend on the accelerator and on the state of the model
 in the cache. The distribution and the shape of the latency are the parts that
 matter.
+
+# Benchmark of the synchronisation of a fork
+
+The second measurement is the work the dashboard does before the model is
+asked anything: fetching the upstream branch of a fork, listing the commits the
+fork is missing, and storing that list. The numbers come from Criterion over
+the benchmark in
+[`crates/fsrs-core/benches/sync.rs`](../../crates/fsrs-core/benches/sync.rs).
+
+```bash
+cargo bench -p fsrs-core
+```
+
+## The fixture
+
+An upstream of 1500 real commits, cloned in full, then reset 200 commits back
+— the backlog a user comes back to after a while. The commits each change one
+small file, so every diff is real.
+
+## The numbers
+
+| Operation | Path | Time |
+|-----------|------|------|
+| Listing 200 pending commits | the previous path: a diff per commit | 33.99 ms |
+| Listing 200 pending commits | statistics known, no diff computed | 2.99 ms |
+| Listing 200 pending commits | the first listing, nothing known | 34.89 ms |
+| Storing 500 rows | the previous path: delete all, insert all | 1.14 ms |
+| Storing 500 rows | upsert, every row changed | 0.428 ms |
+| Storing 500 rows | upsert, the list did not move | 0.173 ms |
+| Synchronisation end to end | cold, statistics unknown | 41.28 ms |
+| Synchronisation end to end | warm, statistics known | 4.96 ms |
+
+The warm synchronisation is **8.3x faster** than the cold one and **6.8x
+faster** than the previous path, because the only thing that is computed is
+what changed. The list is stored only when it actually differs from what is
+already on disk.
+
+## Why a commit is not measured twice
+
+The fork is synchronised every time the dashboard opens. Between two
+synchronisations of a fork that did not move, nothing about its pending commits
+changes — a commit is immutable — so the diff statistics of the first listing
+are kept in the repository itself, and reused on every later one. See
+[ADR-09](../adr/ADR-09-commits-are-counted-once.md).

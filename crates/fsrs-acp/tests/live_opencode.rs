@@ -11,11 +11,19 @@
 
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::LazyLock;
 
 use fsrs_acp::{AgentConfig, AgentConnection, AgentRole};
+use tokio::sync::Mutex;
 
 /// Command line of the agent used by the tests.
 const COMMAND: &str = "opencode acp";
+
+// The tests share one provider account, and every one of them starts its own
+// agent process. Run in parallel they compete for the quota of the account
+// and the prompt of one test is refused while the others are in flight, so
+// the tests take the agent one after another.
+static AGENT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// The model the tests use.
 ///
@@ -23,7 +31,7 @@ const COMMAND: &str = "opencode acp";
 /// the tests use an explicitly configured model instead. Override it with
 /// `FSRS_TEST_MODEL`.
 fn test_model() -> String {
-    std::env::var("FSRS_TEST_MODEL").unwrap_or_else(|_| "hnc/MiniMax-M3.1-Flash".to_string())
+    std::env::var("FSRS_TEST_MODEL").unwrap_or_else(|_| "opencode/big-pickle".to_string())
 }
 
 /// Whether the agent is installed on this machine.
@@ -50,6 +58,7 @@ async fn the_agent_initialises_and_offers_its_models() {
         return;
     }
     let _ = std::fs::create_dir_all(workspace());
+    let _guard = AGENT.lock().await;
 
     let config = AgentConfig::new(COMMAND, workspace());
     let models = AgentConnection::run(&config, None, move |connection| async move {
@@ -77,6 +86,7 @@ async fn the_agent_answers_a_prompt() {
         return;
     }
     let _ = std::fs::create_dir_all(workspace());
+    let _guard = AGENT.lock().await;
 
     let config = AgentConfig::new(COMMAND, workspace());
     let answer = AgentConnection::run(&config, None, move |connection| async move {
@@ -113,6 +123,7 @@ async fn the_agent_can_use_a_selected_model() {
         return;
     }
     let _ = std::fs::create_dir_all(workspace());
+    let _guard = AGENT.lock().await;
 
     let config = AgentConfig::new(COMMAND, workspace());
     let (models, selected) = AgentConnection::run(&config, None, move |connection| async move {

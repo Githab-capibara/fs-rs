@@ -4,7 +4,7 @@
 //! remote is fetched into `refs/remotes/upstream/<branch>` and pending commits
 //! are the ones reachable from upstream but not from the fork's main branch.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
@@ -120,7 +120,9 @@ impl GitRepo {
             .context("upstream remote is not configured")?;
         let refspec = format!("+refs/heads/{branch}:refs/remotes/{UPSTREAM_REMOTE}/{branch}");
         let mut options = FetchOptions::new();
-        options.download_tags(git2::AutotagOption::All);
+        // The pending set is derived from the branch, never from a tag, so
+        // autotagging only downloads objects and traffic nobody reads.
+        options.download_tags(git2::AutotagOption::None);
         remote
             .fetch(&[refspec.as_str()], Some(&mut options), None)
             .with_context(|| format!("fetching upstream branch {branch}"))?;
@@ -148,33 +150,82 @@ impl GitRepo {
         let mut walk = self.repo.revwalk()?;
         walk.set_sorting(git2::Sort::TIME)?;
         walk.push(upstream.id())?;
+        // Hiding `local_oid` removes every commit reachable from the fork's
+        // branch, which is exactly the set `graph_descendant_of` used to test
+        // one commit at a time — an O(N) check per walk step, so an O(N²)
+        // listing on a long history.
         walk.hide(local_oid)?;
         let mut pending = Vec::new();
         for oid in walk {
             let oid = oid?;
-            // Skip commits that are already reachable from the fork's branch.
-            if self
-                .repo
-                .graph_descendant_of(local_oid, oid)
-                .unwrap_or(false)
-            {
-                continue;
-            }
             let commit = self.repo.find_commit(oid)?;
             pending.push(self.describe_commit(&commit)?);
         }
         Ok(pending)
     }
 
+    /// Commits reachable from upstream but absent from the fork's `branch`,
+    /// reusing the statistics already known for some of them.
+    ///
+    /// A commit is immutable: its diff against its first parent never changes,
+    /// so the statistics of a SHA that was listed before do not have to be
+    /// computed again. `known` carries them by SHA. Only the commits that are
+    /// missing from `known` pay for [`Self::describe_commit`]; the others are
+    /// copied, which makes a refresh of a fork that did not move almost free.
+    ///
+    /// Result is ordered newest first.
+    pub fn pending_commits_incremental(
+        &self,
+        branch: &str,
+        known: &HashMap<String, CommitStats>,
+    ) -> Result<Vec<PendingCommit>> {
+        let local = self.branch_commit(branch)?;
+        let upstream = self.upstream_commit(branch)?;
+        let mut walk = self.repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TIME)?;
+        walk.push(upstream.id())?;
+        walk.hide(local.id())?;
+        let mut pending = Vec::new();
+        for oid in walk {
+            let oid = oid?;
+            let sha = oid.to_string();
+            let commit = self.repo.find_commit(oid)?;
+            if let Some(stats) = known.get(&sha) {
+                // The statistics are already known: reuse them and skip the
+                // tree-to-tree diff entirely.
+                pending.push(self.describe_commit_with_stats(&commit, stats.clone(), None)?);
+            } else {
+                pending.push(self.describe_commit(&commit)?);
+            }
+        }
+        Ok(pending)
+    }
+
     /// Build a [`PendingCommit`] description from a git commit.
     pub fn describe_commit(&self, commit: &Commit<'_>) -> Result<PendingCommit> {
-        let message = commit.message().unwrap_or_default();
+        let stats = self.commit_stats(commit)?;
+        self.describe_commit_with_stats(commit, stats, None)
+    }
+
+    /// Build a [`PendingCommit`] from git metadata and statistics computed
+    /// elsewhere (or already known from an earlier listing of the same SHA).
+    ///
+    /// `message` overrides the message of the commit; `None` reads it from the
+    /// commit itself.
+    pub fn describe_commit_with_stats(
+        &self,
+        commit: &Commit<'_>,
+        stats: CommitStats,
+        message: Option<&str>,
+    ) -> Result<PendingCommit> {
+        let message = message.unwrap_or_else(|| commit.message().unwrap_or_default());
         let (summary, body) = split_message(message);
         let author = commit.author();
-        let stats = self.commit_stats(commit)?;
+        // One allocation, `oid.to_string` first built the whole 40 characters.
+        let short_sha = format!("{:.8}", commit.id());
         Ok(PendingCommit {
             sha: commit.id().to_string(),
-            short_sha: commit.id().to_string()[..8].to_string(),
+            short_sha,
             summary,
             body,
             author: author.name().unwrap_or("unknown").to_string(),

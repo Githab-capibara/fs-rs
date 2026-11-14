@@ -31,12 +31,14 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-04](adr/ADR-04-mock-agent-as-a-test-double.md) | Keep the mock agent in the library |
 | [ADR-05](adr/ADR-05-foq-as-the-only-local-model.md) | Use Foq as the only local decision model |
 | [ADR-06](adr/ADR-06-context-fitted-prompts.md) | Fit every prompt into the window of the runtime |
+| [ADR-09](adr/ADR-09-commits-are-counted-once.md) | Count every commit once |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |
 | [Getting started](guides/01-getting-started.md) | The first run of the dashboard |
 | [Configuration](guides/02-configuration.md) | Every key of `config.toml` |
 | [The local decision model](guides/03-local-decision-model.md) | The runtime, the GPU, the calibration |
+| [Benchmarks](benchmarks/README.md) | The decision model and the synchronisation, measured |
 
 ## The verification of this documentation
 

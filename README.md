@@ -138,6 +138,11 @@ model, the calibration, the ACP client against a mock agent, and the window
 itself through `egui_kittest`. The tests that need a running agent or a
 running model skip themselves when it is absent.
 
+The live tests that do talk to a service take it one at a time: the decision
+server runs with a single slot, and the agent tests share one provider
+account. Without that, the requests of the tests would compete for the same
+slot and starve each other's timeout.
+
 | Suite | What it covers |
 |-------|----------------|
 | [`crates/fsrs-core/tests`](crates/fsrs-core/README.md) | The git layer and the catalogue against real repositories |

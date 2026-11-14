@@ -28,7 +28,7 @@ cargo run -p fsrs-ai --example benchmark -- /path/to/upstream HEAD 60 \
 | Test suite | What it covers |
 |------------|----------------|
 | [`tests/prompt_conformance.rs`](tests/prompt_conformance.rs) | The prompt against the fixture of the reference Python implementation — a drift would silently degrade every decision |
-| [`tests/live_server.rs`](tests/live_server.rs) | The client against a running Foq server: the answers, the context fitting, the refused request. The tests skip themselves when no server listens |
+| [`tests/live_server.rs`](tests/live_server.rs) | The client against a running Foq server: the answers, the context fitting, the refused request. The tests skip themselves when no server listens, and they take the single slot of the server one after another |
 
 ## Related documents
 

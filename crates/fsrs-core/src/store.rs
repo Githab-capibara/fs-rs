@@ -1,11 +1,18 @@
 //! Persistent storage for repositories, pending commits, assessments and runs.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
+use crate::git::CommitStats;
 use crate::{Assessment, Complexity, Criticality, Repo, Run, RunEvent, RunState, UpstreamCommit};
+
+/// The SHAs of `commits`, for the `json_each` membership test.
+fn shas(commits: &[UpstreamCommit]) -> Vec<&str> {
+    commits.iter().map(|commit| commit.sha.as_str()).collect()
+}
 
 /// SQLite-backed store of all dashboard state.
 pub struct Store {
@@ -25,6 +32,18 @@ impl Store {
             .with_context(|| format!("opening database {}", path.display()))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        // WAL keeps the log in the operating system page cache, so a commit no
+        // longer waits for a disk flush; NORMAL is the safe companion of that
+        // mode (a power loss can lose the last commits, never corrupt).
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // The dashboard reads the whole table on start; a second writer must
+        // wait rather than fail.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // 64MB of page cache and 256MB of memory-mapped reading: the commit
+        // list of a fork with a long history then lives in RAM.
+        conn.pragma_update(None, "cache_size", -64000)?;
+        conn.pragma_update(None, "mmap_size", 268435456)?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
         let store = Self { conn };
         store.migrate()?;
         Ok(store)
@@ -115,7 +134,8 @@ impl Store {
 
     /// Insert or update a repository, returning its identifier.
     pub fn upsert_repo(&self, repo: &Repo) -> Result<i64> {
-        self.conn.execute(
+        // One statement: the identifier comes back with the write.
+        let id: i64 = self.conn.query_row(
             r#"
             INSERT INTO repos (name, path, upstream_url, upstream_web, main_branch, pending_commits, last_fetched_at)
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -126,6 +146,7 @@ impl Store {
                 main_branch = excluded.main_branch,
                 pending_commits = excluded.pending_commits,
                 last_fetched_at = excluded.last_fetched_at
+            RETURNING id
             "#,
             params![
                 repo.name,
@@ -136,10 +157,6 @@ impl Store {
                 repo.pending_commits,
                 repo.last_fetched_at,
             ],
-        )?;
-        let id: i64 = self.conn.query_row(
-            "SELECT id FROM repos WHERE path = ?1",
-            params![repo.path.to_string_lossy()],
             |row| row.get(0),
         )?;
         Ok(id)
@@ -147,7 +164,7 @@ impl Store {
 
     /// List all tracked repositories.
     pub fn list_repos(&self) -> Result<Vec<Repo>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, name, path, upstream_url, upstream_web, main_branch, pending_commits, last_fetched_at FROM repos ORDER BY name",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -171,7 +188,7 @@ impl Store {
 
     /// Fetch a repository by identifier.
     pub fn repo(&self, id: i64) -> Result<Option<Repo>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, name, path, upstream_url, upstream_web, main_branch, pending_commits, last_fetched_at FROM repos WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -198,15 +215,45 @@ impl Store {
     }
 
     /// Replace the pending commit list of a repository.
+    ///
+    /// Every commit is upserted by its SHA: the rows of the commits that are
+    /// already stored are updated in place instead of being rewritten. The
+    /// whole list is still replaced as a set — the SHAs that are absent from
+    /// `commits` are deleted.
+    ///
+    /// A call whose list is already stored writes nothing at all: a poll of a
+    /// repository that did not move costs one read of the SHAs and no page.
+    /// A commit is immutable, so a stored row of a pending SHA is already
+    /// correct and rewriting it would only burn a page.
     pub fn replace_commits(&self, repo_id: i64, commits: &[UpstreamCommit]) -> Result<()> {
+        if self.commits_match(repo_id, commits)? {
+            // The pending count is still confirmed: it is the number of rows
+            // that the list matched.
+            self.conn.execute(
+                "UPDATE repos SET pending_commits = ?2 WHERE id = ?1",
+                params![repo_id, commits.len() as i64],
+            )?;
+            return Ok(());
+        }
         let tx = self.conn.unchecked_transaction()?;
-        tx.execute("DELETE FROM commits WHERE repo_id = ?1", params![repo_id])?;
         {
-            let mut stmt = tx.prepare(
+            let mut stmt = tx.prepare_cached(
                 r#"
                 INSERT INTO commits (repo_id, sha, short_sha, summary, body, author, author_email,
                                      authored_at, committed_at, files, insertions, deletions, url)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                ON CONFLICT(repo_id, sha) DO UPDATE SET
+                    short_sha = excluded.short_sha,
+                    summary = excluded.summary,
+                    body = excluded.body,
+                    author = excluded.author,
+                    author_email = excluded.author_email,
+                    authored_at = excluded.authored_at,
+                    committed_at = excluded.committed_at,
+                    files = excluded.files,
+                    insertions = excluded.insertions,
+                    deletions = excluded.deletions,
+                    url = excluded.url
                 "#,
             )?;
             for commit in commits {
@@ -220,13 +267,20 @@ impl Store {
                     commit.author_email,
                     commit.authored_at,
                     commit.committed_at,
-                    serde_json::to_string(&commit.files)?,
+                    sonic_rs::to_string(&commit.files)?,
                     commit.insertions,
                     commit.deletions,
                     commit.url,
                 ])?;
             }
         }
+        // Keep the set semantics of the previous implementation: the commits
+        // that are no longer pending leave the store.
+        let mut delete = tx.prepare_cached(
+            "DELETE FROM commits WHERE repo_id = ?1 AND sha NOT IN (SELECT value FROM json_each(?2))",
+        )?;
+        delete.execute(params![repo_id, sonic_rs::to_string(&shas(commits))?])?;
+        drop(delete);
         tx.execute(
             "UPDATE repos SET pending_commits = ?2 WHERE id = ?1",
             params![repo_id, commits.len() as i64],
@@ -235,9 +289,53 @@ impl Store {
         Ok(())
     }
 
+    /// Whether the store already holds exactly the SHAs of `commits`.
+    ///
+    /// One statement reads the SHAs of the repository; the comparison happens
+    /// against the list, which is short. A difference of either side returns
+    /// false, so the caller falls back to writing.
+    fn commits_match(&self, repo_id: i64, commits: &[UpstreamCommit]) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT sha FROM commits WHERE repo_id = ?1")?;
+        let stored: std::collections::HashSet<String> = stmt
+            .query_map(params![repo_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<std::collections::HashSet<String>, _>>()?;
+        if stored.len() != commits.len() {
+            return Ok(false);
+        }
+        Ok(commits.iter().all(|commit| stored.contains(&commit.sha)))
+    }
+
+    /// Fetch the commits of a repository, newest first.
+    ///
+    /// Used to reuse the diff statistics of a previous synchronisation.
+    pub fn commit_stats(&self, repo_id: i64) -> Result<HashMap<String, CommitStats>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT sha, files, insertions, deletions FROM commits WHERE repo_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![repo_id], |row| {
+            let files: String = row.get(1)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                CommitStats {
+                    files: sonic_rs::from_str::<Vec<String>>(&files).unwrap_or_default(),
+                    insertions: row.get(2)?,
+                    deletions: row.get(3)?,
+                },
+            ))
+        })?;
+        let mut out = HashMap::with_capacity(1024);
+        for row in rows {
+            let (sha, stats) = row?;
+            out.insert(sha, stats);
+        }
+        Ok(out)
+    }
+
     /// Pending commits of a repository, newest first.
     pub fn list_commits(&self, repo_id: i64) -> Result<Vec<UpstreamCommit>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             r#"
             SELECT repo_id, sha, short_sha, summary, body, author, author_email,
                    authored_at, committed_at, files, insertions, deletions, url
@@ -256,7 +354,7 @@ impl Store {
                 author_email: row.get(6)?,
                 authored_at: row.get(7)?,
                 committed_at: row.get(8)?,
-                files: serde_json::from_str(&files).unwrap_or_default(),
+                files: sonic_rs::from_str::<Vec<String>>(&files).unwrap_or_default(),
                 insertions: row.get(10)?,
                 deletions: row.get(11)?,
                 url: row.get(12)?,
@@ -304,7 +402,7 @@ impl Store {
 
     /// Fetch the assessment of one commit.
     pub fn assessment(&self, repo_id: i64, sha: &str) -> Result<Option<Assessment>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             r#"
             SELECT repo_id, sha, criticality, complexity, criticality_confidence,
                    complexity_confidence, needs_review, rationale, model, created_at
@@ -333,7 +431,7 @@ impl Store {
 
     /// Fetch every assessment of a repository.
     pub fn list_assessments(&self, repo_id: i64) -> Result<Vec<Assessment>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             r#"
             SELECT repo_id, sha, criticality, complexity, criticality_confidence,
                    complexity_confidence, needs_review, rationale, model, created_at
@@ -404,7 +502,7 @@ impl Store {
 
     /// Fetch a run by identifier.
     pub fn run(&self, id: i64) -> Result<Option<Run>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, repo_id, sha, branch, state, cycles, model, created_at, updated_at FROM runs WHERE id = ?1",
         )?;
         let mut rows = stmt.query(params![id])?;
@@ -427,7 +525,7 @@ impl Store {
 
     /// List all runs of a repository, newest first.
     pub fn list_runs(&self, repo_id: i64) -> Result<Vec<Run>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, repo_id, sha, branch, state, cycles, model, created_at, updated_at FROM runs WHERE repo_id = ?1 ORDER BY id DESC",
         )?;
         let rows = stmt.query_map(params![repo_id], |row| {
@@ -451,7 +549,7 @@ impl Store {
         Ok(out)
     }
 
-    /// Record a prompt or an answer of one pipeline agent.
+    /// Record one prompt or answer of a pipeline agent.
     pub fn insert_run_event(&self, event: &RunEvent) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO run_events (run_id, agent, prompt, output, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -460,9 +558,37 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Record a batch of pipeline events inside one transaction.
+    ///
+    /// The events of a pipeline arrive one by one, but a flush of the queue in
+    /// the interface handles several of them at once: one transaction for the
+    /// batch instead of one commit per event.
+    pub fn insert_run_events(&self, events: &[RunEvent]) -> Result<()> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO run_events (run_id, agent, prompt, output, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for event in events {
+                stmt.execute(params![
+                    event.run_id,
+                    event.agent,
+                    event.prompt,
+                    event.output,
+                    event.created_at,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// All events of a run, oldest first.
     pub fn list_run_events(&self, run_id: i64) -> Result<Vec<RunEvent>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT run_id, agent, prompt, output, created_at FROM run_events WHERE run_id = ?1 ORDER BY id",
         )?;
         let rows = stmt.query_map(params![run_id], |row| {
@@ -545,6 +671,151 @@ mod tests {
         store.replace_commits(repo_id, &[]).unwrap();
         assert!(store.list_commits(repo_id).unwrap().is_empty());
         assert_eq!(store.list_repos().unwrap()[0].pending_commits, 0);
+    }
+
+    #[test]
+    fn replacing_commits_upserts_by_sha_and_drops_the_rest() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.upsert_repo(&repo("a")).unwrap();
+        let first = UpstreamCommit {
+            repo_id,
+            sha: "sha-1".into(),
+            short_sha: "sha-1111".into(),
+            summary: "First".into(),
+            body: String::new(),
+            author: "dev".into(),
+            author_email: "dev@example.com".into(),
+            authored_at: 10,
+            committed_at: 10,
+            files: vec!["a.rs".into(), "b.rs".into()],
+            insertions: 5,
+            deletions: 2,
+            url: "https://example.com/commit/sha-1".into(),
+        };
+        let second = UpstreamCommit {
+            sha: "sha-2".into(),
+            short_sha: "sha-2222".into(),
+            summary: "Second".into(),
+            url: "https://example.com/commit/sha-2".into(),
+            ..first.clone()
+        };
+        store
+            .replace_commits(repo_id, &[first.clone(), second.clone()])
+            .unwrap();
+        assert_eq!(store.list_commits(repo_id).unwrap().len(), 2);
+
+        // The fork moved: the statistics of sha-1 were updated and sha-2 left.
+        let updated = UpstreamCommit {
+            insertions: 50,
+            deletions: 21,
+            ..first.clone()
+        };
+        store.replace_commits(repo_id, &[updated]).unwrap();
+        let stored = store.list_commits(repo_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].sha, "sha-1");
+        assert_eq!(stored[0].insertions, 50);
+        assert_eq!(stored[0].deletions, 21);
+
+        // The statistics are served back keyed by SHA, for the incremental
+        // listing of the git layer.
+        let stats = store.commit_stats(repo_id).unwrap();
+        let cached = stats.get("sha-1").expect("sha-1 statistics are cached");
+        assert_eq!(cached.files, vec!["a.rs".to_string(), "b.rs".to_string()]);
+        assert_eq!(cached.insertions, 50);
+        assert_eq!(cached.deletions, 21);
+        assert_eq!(store.commit_stats(9999).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_same_list_is_written_once() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.upsert_repo(&repo("a")).unwrap();
+        let commit = UpstreamCommit {
+            repo_id,
+            sha: "sha-1".into(),
+            short_sha: "sha-1111".into(),
+            summary: "First".into(),
+            body: String::new(),
+            author: "dev".into(),
+            author_email: "dev@example.com".into(),
+            authored_at: 1,
+            committed_at: 1,
+            files: vec!["a.rs".into()],
+            insertions: 1,
+            deletions: 1,
+            url: "https://example.com/commit/sha-1".into(),
+        };
+        store.replace_commits(repo_id, &[commit.clone()]).unwrap();
+
+        // A poll of a repository that did not move writes nothing: the row of
+        // a pending commit is immutable, so it is already correct.
+        store.replace_commits(repo_id, &[commit.clone()]).unwrap();
+        store.replace_commits(repo_id, &[commit]).unwrap();
+        let stored = store.list_commits(repo_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].summary, "First");
+        assert_eq!(store.list_repos().unwrap()[0].pending_commits, 1);
+
+        // One more commit pending: the list changed, so the store writes.
+        let other = UpstreamCommit {
+            sha: "sha-2".into(),
+            ..stored[0].clone()
+        };
+        store
+            .replace_commits(repo_id, &[other, stored[0].clone()])
+            .unwrap();
+        assert_eq!(store.list_commits(repo_id).unwrap().len(), 2);
+
+        // One commit merged into the fork: the set shrinks, so the store
+        // writes the row away.
+        store
+            .replace_commits(repo_id, &[stored[0].clone()])
+            .unwrap();
+        let stored = store.list_commits(repo_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].sha, "sha-1");
+    }
+
+    #[test]
+    fn run_events_are_written_in_one_batch() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.upsert_repo(&repo("a")).unwrap();
+        let run_id = store
+            .insert_run(&Run {
+                id: 0,
+                repo_id,
+                sha: "sha-1".into(),
+                branch: "fsrs/implement/sha-1".into(),
+                state: RunState::Prepared,
+                cycles: 0,
+                model: "opencode/gpt-5".into(),
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        let events = vec![
+            RunEvent {
+                run_id,
+                agent: "implementer".into(),
+                prompt: "one".into(),
+                output: "out-one".into(),
+                created_at: 2,
+            },
+            RunEvent {
+                run_id,
+                agent: "verifier".into(),
+                prompt: "two".into(),
+                output: "out-two".into(),
+                created_at: 3,
+            },
+        ];
+        store.insert_run_events(&events).unwrap();
+        store.insert_run_events(&[]).unwrap();
+        let loaded = store.list_run_events(run_id).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].prompt, "one");
+        assert_eq!(loaded[1].agent, "verifier");
     }
 
     #[test]

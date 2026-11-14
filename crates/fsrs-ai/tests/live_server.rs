@@ -3,8 +3,14 @@
 //! These tests are skipped automatically when no server is listening, so the
 //! suite stays green on machines without the local model.
 
+use std::sync::{LazyLock, Mutex};
+
 use fsrs_ai::{DecisionSchema, FoqClient};
 use fsrs_core::{Complexity, Criticality, UpstreamCommit};
+
+// The decision server runs with a single slot (`-np 1`), so requests serialize;
+// parallel tests starve each other's timeout.
+static SLOT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Default address of the local decision server.
 const DEFAULT_URL: &str = "http://127.0.0.1:8089";
@@ -40,6 +46,7 @@ fn the_server_answers_a_real_criticality_question() {
         return;
     };
     let context = fsrs_ai::build_context(&commit(), None);
+    let _guard = SLOT.lock().expect("the slot lock is not poisoned");
     let result = client
         .decide(&context, &DecisionSchema::criticality())
         .expect("the decision server should answer");
@@ -64,6 +71,7 @@ fn a_security_fix_is_judged_critical() {
         return;
     };
     let context = fsrs_ai::build_context(&commit(), None);
+    let _guard = SLOT.lock().expect("the slot lock is not poisoned");
     let result = client
         .decide(&context, &DecisionSchema::criticality())
         .expect("the decision server should answer");
@@ -78,6 +86,7 @@ fn the_server_answers_a_real_complexity_question() {
         return;
     };
     let context = fsrs_ai::build_context(&commit(), None);
+    let _guard = SLOT.lock().expect("the slot lock is not poisoned");
     let result = client
         .decide(&context, &DecisionSchema::complexity())
         .expect("the decision server should answer");
@@ -98,6 +107,7 @@ fn a_full_assessment_is_produced_for_a_commit() {
         eprintln!("skipping: no Foq server on {DEFAULT_URL}");
         return;
     };
+    let _guard = SLOT.lock().expect("the slot lock is not poisoned");
     let assessment = fsrs_ai::assess_commit(&client, &commit(), None).expect("assessment");
     assert_eq!(assessment.repo_id, 1);
     assert_eq!(assessment.sha, "a".repeat(40));
@@ -115,6 +125,7 @@ fn a_patch_that_does_not_fit_into_the_window_is_shortened() {
     // A patch far larger than any context window of the model.
     let patch = "+ a line of the diff that is much too long to fit\n".repeat(2_000);
     let context = fsrs_ai::build_context(&commit(), Some(&patch));
+    let _guard = SLOT.lock().expect("the slot lock is not poisoned");
     let result = client
         .decide(&context, &DecisionSchema::criticality())
         .expect("the decision server should answer even for a huge diff");

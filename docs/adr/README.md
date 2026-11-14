@@ -11,7 +11,8 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-04](ADR-04-mock-agent-as-a-test-double.md) | Keep the mock agent in the library | Accepted |
 | [ADR-05](ADR-05-foq-as-the-only-local-model.md) | Use Foq as the only local decision model | Accepted |
 | [ADR-06](ADR-06-context-fitted-prompts.md) | Fit every prompt into the window of the runtime | Accepted |
-
+| [ADR-07](ADR-07-serialize-the-live-tests.md) | Serialize the live tests of the external services | Accepted |
+| [ADR-09](ADR-09-commits-are-counted-once.md) | Count every commit once | Accepted |
 ## How to read an ADR
 
 * **Status** — `Proposed`, `Accepted`, `Deprecated` or `Superseded by ADR-NN`.

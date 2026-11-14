@@ -6,13 +6,16 @@
 //! a background thread of a Tokio runtime and reports back through a channel
 //! that the interface drains once per frame.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Instant;
 
 use fsrs_acp::{
     AcpError, AgentConfig, ModelChoice, PipelineOutcome, PipelineRequest, RunEvent, discover_models,
 };
 use fsrs_ai::{CalibrationProfile, FoqClient};
+use fsrs_core::git::CommitStats;
 use fsrs_core::{Assessment, Repo, UpstreamCommit, catalog};
 
 /// A message produced by the background and consumed by the interface.
@@ -126,15 +129,34 @@ impl Worker {
     }
 
     /// Fetch the upstream branch of a repository and list the missing commits.
-    pub fn sync_repo(&self, repo: Repo) {
+    ///
+    /// The statistics of the commits that were listed before are read from the
+    /// store on the caller's thread and handed to the background thread: a
+    /// fork that did not move since the last synchronisation lists its pending
+    /// commits without computing a single diff. The store itself is not shared
+    /// — a SQLite connection is bound to one thread.
+    pub fn sync_repo(&self, repo: Repo, known: HashMap<String, CommitStats>) {
         let sender = self.sender.clone();
         self.runtime.spawn_blocking(move || {
             let repo_id = repo.id;
-            match catalog::sync_repo(&repo) {
+            let started = Instant::now();
+            match catalog::sync_repo(&repo, &known) {
                 Ok(commits) => {
+                    tracing::info!(
+                        repo_id,
+                        commits = commits.len(),
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "sync finished"
+                    );
                     let _ = sender.send(WorkerMessage::Synced { repo_id, commits });
                 }
                 Err(error) => {
+                    tracing::warn!(
+                        repo_id,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        %error,
+                        "sync failed"
+                    );
                     let _ = sender.send(WorkerMessage::SyncFailed {
                         repo_id,
                         error: error.to_string(),
@@ -280,7 +302,7 @@ mod tests {
             pending_commits: 0,
             last_fetched_at: None,
         };
-        worker.sync_repo(repo);
+        worker.sync_repo(repo, Default::default());
         // The directory is not a repository, so the job has to fail — but it
         // has to report the failure instead of hanging.
         let mut messages = Vec::new();

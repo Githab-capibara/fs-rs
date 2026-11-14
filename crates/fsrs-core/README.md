@@ -34,6 +34,8 @@ ones the toolchain and zig provide.
 
 | Document | Purpose |
 |----------|---------|
+| [ADR-09](../../docs/adr/ADR-09-commits-are-counted-once.md) | Count every commit once |
+| [Benchmarks](../../docs/benchmarks/README.md) | The measured latency of the synchronisation |
 | [ADR-06](../../docs/adr/ADR-06-context-fitted-prompts.md) | The context window of the runtime |
 | [Configuration guide](../../docs/guides/02-configuration.md) | Every key of `config.toml`, as read by this crate |
 | [Design note — the pipeline](../../docs/design/02-three-agent-pipeline.md) | The branch and the merge, as executed by `git.rs` |

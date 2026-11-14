@@ -21,7 +21,7 @@ continues in the same session and the pipeline survives a change of the agent.
 | Test suite | What it covers |
 |------------|----------------|
 | [`tests/pipeline_mock.rs`](tests/pipeline_mock.rs) | The whole pipeline against the mock: the prompts, the rework loop, the branch and the merge |
-| [`tests/live_opencode.rs`](tests/live_opencode.rs) | The client against a running `opencode acp`. The tests skip themselves when OpenCode is not installed |
+| [`tests/live_opencode.rs`](tests/live_opencode.rs) | The client against a running `opencode acp`. The tests skip themselves when OpenCode is not installed, and they take the agent one after another because they share one provider account |
 
 ## The flow
 

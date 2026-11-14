@@ -6,9 +6,11 @@
 //! upstream branch, walks the commits that are not reachable from the fork and
 //! converts them into the domain type [`UpstreamCommit`].
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 
-use crate::git::{GitRepo, PendingCommit};
+use crate::git::{CommitStats, GitRepo, PendingCommit};
 use crate::{Repo, UpstreamCommit};
 
 /// Build the browser URL of a commit inside the upstream repository.
@@ -54,13 +56,17 @@ pub fn to_upstream_commit(
 /// The `upstream` remote is created or corrected first, so the caller only has
 /// to provide the repository row it keeps in the store. The returned commits
 /// are ordered newest first.
-pub fn sync_repo(repo: &Repo) -> Result<Vec<UpstreamCommit>> {
+///
+/// `known` carries the diff statistics of a previous synchronisation, keyed by
+/// SHA. A commit is immutable, so its statistics never change after the first
+/// listing; only the SHAs that are absent from `known` are computed again.
+pub fn sync_repo(repo: &Repo, known: &HashMap<String, CommitStats>) -> Result<Vec<UpstreamCommit>> {
     let git = GitRepo::open(&repo.path)?;
     if !repo.upstream_url.trim().is_empty() {
         git.ensure_upstream_remote(&repo.upstream_url)?;
     }
     git.fetch_upstream(&repo.main_branch)?;
-    let pending = git.pending_commits(&repo.main_branch)?;
+    let pending = git.pending_commits_incremental(&repo.main_branch, known)?;
     Ok(pending
         .into_iter()
         .map(|commit| to_upstream_commit(repo.id, commit, &repo.upstream_web))

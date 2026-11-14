@@ -113,6 +113,11 @@ them and every slot only gets 1024 tokens. The dashboard runs at most two
 ratings at a time and each rating sends its requests one after the other, so a
 second slot buys nothing.
 
+The single slot is also why the timeout of a request cannot be short: the
+request that arrives while another one is being served waits for its turn, and
+its own clock already runs. `FoqClient::new` therefore defaults to 120 seconds,
+the same value that the configuration documents for `foq_timeout_secs`.
+
 The service is a user unit, `foq-server.service`, and it is the only process
 that holds the discrete GPU.
 

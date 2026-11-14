@@ -95,6 +95,12 @@ check(
 )
 
 # --- The decision model ----------------------------------------------
+client = read("crates/fsrs-ai/src/client.rs")
+check(
+    "The default timeout of the client is the documented one",
+    "timeout: Duration::from_secs(120)" in client,
+    "the default timeout of FoqClient::new",
+)
 calibration = read("crates/fsrs-ai/src/calibration.rs")
 check(
     "The temperatures of the profiles are the ones in the code",
@@ -161,6 +167,20 @@ check(
     "MAX_CONCURRENT_ASSESSMENTS",
 )
 
+# --- The live tests ---------------------------------------------------
+live_server = read("crates/fsrs-ai/tests/live_server.rs")
+check(
+    "The live tests of the decision model take the single slot of the server",
+    "static SLOT: LazyLock<Mutex<()>>" in live_server,
+    "the lock of the live tests",
+)
+live_opencode = read("crates/fsrs-acp/tests/live_opencode.rs")
+check(
+    "The live tests of the agent take the agent one after another",
+    "static AGENT: LazyLock<Mutex<()>>" in live_opencode,
+    "the lock of the live tests of the agent",
+)
+
 # --- The benchmark ----------------------------------------------------
 report = json.loads(read("docs/benchmarks/decision-model.json"))
 check(
@@ -200,6 +220,20 @@ for relative in (
         path.exists() and path.stat().st_size > 0,
         f"{path.stat().st_size if path.exists() else 0} bytes",
     )
+
+# --- The records of the decisions --------------------------------------
+adr_index = read("docs/adr/README.md")
+adr_files = sorted(
+    path.name for path in (ROOT / "docs/adr").glob("ADR-*.md")
+)
+missing_adr = [
+    name for name in adr_files if f"({name})" not in adr_index
+]
+check(
+    "Every record of a decision is listed in the index of the records",
+    adr_files and not missing_adr,
+    f"{len(adr_files)} records" + ("" if not missing_adr else f", unlisted: {missing_adr}"),
+)
 
 # --- The links of the documentation -----------------------------------
 broken = []

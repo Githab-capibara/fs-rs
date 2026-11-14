@@ -64,6 +64,12 @@ different window still works: it asks `/props` for the size and `/tokenize`
 for the number of tokens, and it shortens the diff until the prompt fits. See
 [ADR-06](../adr/ADR-06-context-fitted-prompts.md).
 
+One slot also means one request at a time. The live tests of
+`crates/fsrs-ai/tests/live_server.rs` take a lock before they talk to the
+server, so they queue up instead of competing for the single slot: a
+competition fills the queue of the server and every request waits for the
+timeout of the client.
+
 ## The GPU
 
 The decision model owns the discrete NVIDIA GPU. The order of preference is:

@@ -111,6 +111,8 @@ pub struct FsrsApp {
     run_state: Option<RunState>,
     /// The commits that still wait for their assessment.
     assessment_queue: VecDeque<(usize, String)>,
+    /// The pipeline events of the current frame, waiting for one transaction.
+    pending_events: Vec<fsrs_core::RunEvent>,
     /// The assessments that are currently running.
     assessment_in_flight: usize,
     /// The last message for the user.
@@ -169,6 +171,7 @@ impl FsrsApp {
             run_id: None,
             run_state: None,
             assessment_queue: VecDeque::new(),
+            pending_events: Vec::new(),
             assessment_in_flight: 0,
             status: String::new(),
             error: None,
@@ -291,7 +294,10 @@ impl FsrsApp {
         self.repos = views;
         self.selected_repo = if self.repos.is_empty() { None } else { Some(0) };
         for view in &self.repos {
-            self.worker.sync_repo(view.repo.clone());
+            self.worker.sync_repo(
+                view.repo.clone(),
+                self.store.commit_stats(view.repo.id).unwrap_or_default(),
+            );
         }
     }
 
@@ -348,6 +354,13 @@ impl FsrsApp {
                 WorkerMessage::PipelineEvent { event } => self.on_pipeline_event(event),
                 WorkerMessage::PipelineFinished { outcome } => self.on_pipeline_finished(outcome),
             }
+        }
+        // The pipeline events of a frame are written in one transaction.
+        let batch = std::mem::take(&mut self.pending_events);
+        if !batch.is_empty()
+            && let Err(error) = self.store.insert_run_events(&batch)
+        {
+            self.error = Some(format!("журнал реализации: {error}"));
         }
     }
 
@@ -491,20 +504,19 @@ impl FsrsApp {
     fn on_pipeline_event(&mut self, event: fsrs_acp::RunEvent) {
         self.log.push(PipelineLog::new(now_unix(), event.clone()));
 
-        if let Some(run_id) = self.run_id {
-            if let Some(state) = run_state_for(&event) {
-                self.run_state = Some(state);
-                let _ = self.store.update_run_state(run_id, state);
-            }
-            let record = fsrs_core::RunEvent {
-                run_id,
-                agent: agent_name(&event).to_string(),
-                prompt: prompt_of(&event).to_string(),
-                output: output_of(&event),
-                created_at: now_unix(),
-            };
-            let _ = self.store.insert_run_event(&record);
+        if let Some(run_id) = self.run_id
+            && let Some(state) = run_state_for(&event)
+        {
+            self.run_state = Some(state);
+            let _ = self.store.update_run_state(run_id, state);
         }
+        self.pending_events.push(fsrs_core::RunEvent {
+            run_id: self.run_id.unwrap_or_default(),
+            agent: agent_name(&event).to_string(),
+            prompt: prompt_of(&event).to_string(),
+            output: output_of(&event),
+            created_at: now_unix(),
+        });
     }
 
     /// The pipeline finished.
@@ -539,7 +551,10 @@ impl FsrsApp {
             view.syncing = true;
         }
         for view in &self.repos {
-            self.worker.sync_repo(view.repo.clone());
+            self.worker.sync_repo(
+                view.repo.clone(),
+                self.store.commit_stats(view.repo.id).unwrap_or_default(),
+            );
         }
     }
 
@@ -616,9 +631,11 @@ impl FsrsApp {
                 self.terminal_title.clear();
             }
             Action::Resync(index) => {
-                if let Some(repo) = self.repos.get(index).map(|view| view.repo.clone()) {
+                if let Some(view) = self.repos.get(index) {
+                    let repo = view.repo.clone();
                     self.repos[index].syncing = true;
-                    self.worker.sync_repo(repo);
+                    let known = self.store.commit_stats(repo.id).unwrap_or_default();
+                    self.worker.sync_repo(repo, known);
                 }
             }
             Action::AssessAll(index) => {
@@ -761,6 +778,7 @@ fn short_sha(sha: &str) -> String {
 
 impl eframe::App for FsrsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let before = self.work_in_flight();
         self.handle_messages();
         self.dispatch_assessments();
 
@@ -771,8 +789,17 @@ impl eframe::App for FsrsApp {
         self.commit_table(ui);
         self.model_picker(ui.ctx());
 
-        if self.is_busy() {
+        // A frame is drawn only when something changed: the background moved
+        // forward, the user clicked, or the terminal produced output (the
+        // terminal widget asks for its own frames). While the dashboard is
+        // idle the CPU is not spun at all.
+        if self.work_in_flight() != before {
             ui.ctx().request_repaint();
+        } else if self.is_busy() {
+            // Busy without new data (the model reads the diff): poll slowly
+            // instead of as fast as the window server allows.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
         }
     }
 }
@@ -784,6 +811,19 @@ impl FsrsApp {
             || !self.assessment_queue.is_empty()
             || self.repos.iter().any(|view| view.syncing)
             || self.run_state.is_some_and(RunState::is_active)
+    }
+
+    /// A number that changes whenever the background state of the window moves.
+    ///
+    /// The frame before the background is drained is compared with the one
+    /// after, so a frame is drawn only when the work of the background has
+    /// actually changed what the window shows.
+    fn work_in_flight(&self) -> usize {
+        self.assessment_in_flight
+            + self.assessment_queue.len()
+            + self.repos.iter().filter(|view| view.syncing).count()
+            + self.log.len()
+            + usize::from(self.run_state.is_some_and(RunState::is_active))
     }
 
     /// The header of the window.

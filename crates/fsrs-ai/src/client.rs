@@ -128,7 +128,11 @@ impl FoqClient {
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            timeout: Duration::from_secs(30),
+            // The default is the one the configuration documents
+            // (`foq_timeout_secs`). A decision model reads the whole diff, so a
+            // single request takes tens of seconds; 30 seconds was too short
+            // for a large one.
+            timeout: Duration::from_secs(120),
             profile: CalibrationProfile::bare(),
             min_confidence: 0.8,
             model: "foq".to_string(),
@@ -461,6 +465,20 @@ mod tests {
     fn the_client_normalises_its_base_url() {
         let client = FoqClient::new("http://127.0.0.1:8089/");
         assert_eq!(client.base_url(), "http://127.0.0.1:8089");
+    }
+
+    #[test]
+    fn the_default_timeout_matches_the_documented_configuration() {
+        // The configuration documents `foq_timeout_secs = 120`. A decision
+        // model reads the whole diff, so the default must not be shorter.
+        let client = FoqClient::new("http://127.0.0.1:8089");
+        assert_eq!(client.timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn the_timeout_can_be_overridden() {
+        let client = FoqClient::new("http://127.0.0.1:8089").with_timeout(Duration::from_secs(7));
+        assert_eq!(client.timeout, Duration::from_secs(7));
     }
 
     #[test]
