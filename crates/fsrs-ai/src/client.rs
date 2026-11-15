@@ -8,8 +8,10 @@
 //! The request payload is byte-for-byte identical to the one sent by the
 //! reference Python client, so the same fine-tuned model behaves identically.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -66,7 +68,7 @@ pub enum FoqError {
 }
 
 /// A client of the local decision server.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct FoqClient {
     base_url: String,
     timeout: Duration,
@@ -75,6 +77,33 @@ pub struct FoqClient {
     model: String,
     /// The context window of the server, learned once and then reused.
     context_size: Arc<OnceLock<usize>>,
+    /// The HTTP agent of every request.
+    ///
+    /// One agent keeps the connection to the server alive: the dashboard asks
+    /// the model dozens of times in a row, and a new connection for every
+    /// question cost a handshake each time.
+    agent: ureq::Agent,
+    /// The contexts that were already fitted, by the hash of their text.
+    ///
+    /// A commit is rated twice — once for the criticality, once for the
+    /// complexity — and both questions read the same context. The fitting
+    /// asks the server to count the tokens, so it is remembered: the second
+    /// question of a commit costs no call at all.
+    fitted: Arc<Mutex<HashMap<u64, String>>>,
+    /// A hook that is called before every request, used by the tests and by
+    /// the probes to count the calls of the server.
+    on_request: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl std::fmt::Debug for FoqClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FoqClient")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("timeout", &self.timeout)
+            .finish()
+    }
 }
 
 /// Payload sent to `/completion`.
@@ -126,6 +155,15 @@ pub struct FoqDecision {
 impl FoqClient {
     /// Create a client with the default calibration profile and threshold.
     pub fn new(base_url: &str) -> Self {
+        // The agent outlives every request of the client: the connection to
+        // the local server is kept open between the questions.
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            // The answer of the server is more useful than the bare status
+            // code, so the errors are read by hand.
+            .http_status_as_error(false)
+            .build()
+            .into();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             // The default is the one the configuration documents
@@ -137,6 +175,25 @@ impl FoqClient {
             min_confidence: 0.8,
             model: "foq".to_string(),
             context_size: Arc::new(OnceLock::new()),
+            agent,
+            fitted: Arc::new(Mutex::new(HashMap::new())),
+            on_request: None,
+        }
+    }
+
+    /// Call `hook` before every request to the server.
+    ///
+    /// The hook counts the calls in the probes and the tests; it is the only
+    /// way to observe how many times the client talks to the server.
+    pub fn with_call_counter(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.on_request = Some(Arc::new(hook));
+        self
+    }
+
+    /// Announce a request to the server.
+    fn count_request(&self) {
+        if let Some(hook) = &self.on_request {
+            hook();
         }
     }
 
@@ -187,12 +244,14 @@ impl FoqClient {
     /// Check that the server answers.
     pub fn is_ready(&self) -> bool {
         let url = format!("{}/health", self.base_url);
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(2)))
-                .build(),
-        );
-        agent.get(&url).call().is_ok()
+        self.count_request();
+        self.agent
+            .get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(2)))
+            .build()
+            .call()
+            .is_ok()
     }
 
     /// The number of tokens the context window of the server holds.
@@ -207,12 +266,15 @@ impl FoqClient {
     /// Ask the server how many tokens its context window holds.
     fn probe_context_size(&self) -> usize {
         let url = format!("{}/props", self.base_url);
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(5)))
-                .build(),
-        );
-        let Ok(response) = agent.get(&url).call() else {
+        self.count_request();
+        let Ok(response) = self
+            .agent
+            .get(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build()
+            .call()
+        else {
             return DEFAULT_CONTEXT_TOKENS;
         };
         let Ok(body) = response.into_body().read_to_string() else {
@@ -236,13 +298,13 @@ impl FoqClient {
     /// conservative estimate.
     pub fn count_tokens(&self, text: &str) -> Option<usize> {
         let url = format!("{}/tokenize", self.base_url);
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(Duration::from_secs(10)))
-                .build(),
-        );
-        let response = agent
+        self.count_request();
+        let response = self
+            .agent
             .post(&url)
+            .config()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .build()
             .send_json(serde_json::json!({ "content": text }))
             .ok()?;
         let body = response.into_body().read_to_string().ok()?;
@@ -256,9 +318,28 @@ impl FoqClient {
     /// The context describes the commit and ends with its diff, so a context
     /// that does not fit is cut from its end: the diff is shortened first and
     /// the metadata is kept.
+    ///
+    /// The result is remembered: the criticality and the complexity of one
+    /// commit read the same context, and the second one does not ask the
+    /// server to count the tokens again.
     pub fn fit_prompt(&self, context: &str, schema: &DecisionSchema) -> String {
+        let key = cache_key(context);
+        if let Ok(cache) = self.fitted.lock()
+            && let Some(fitted) = cache.get(&key)
+        {
+            return schema.format_prompt(fitted);
+        }
+        let started = Instant::now();
         let limit = self.context_size().saturating_sub(ANSWER_RESERVE_TOKENS);
         let fitted = fit_context(context, schema, limit, |text| self.count_tokens(text));
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            chars = fitted.len(),
+            "the prompt was fitted"
+        );
+        if let Ok(mut cache) = self.fitted.lock() {
+            cache.insert(key, fitted.clone());
+        }
         schema.format_prompt(&fitted)
     }
 
@@ -295,15 +376,20 @@ impl FoqClient {
         payload: &CompletionRequest<'_>,
     ) -> Result<CompletionResponse, FoqError> {
         let url = format!("{}/completion", self.base_url);
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                .timeout_global(Some(self.timeout))
-                // The answer of the server is more useful than the bare
-                // status code, so the errors are read by hand.
-                .http_status_as_error(false)
-                .build(),
-        );
-        let mut response = agent.post(&url).send_json(payload)?;
+        self.count_request();
+        // The payload carries the whole diff, so it is the largest string
+        // that leaves the process: `sonic-rs` writes it twice as fast as the
+        // general purpose serializer.
+        let body = sonic_rs::to_string(payload)
+            .map_err(|err| FoqError::InvalidResponse(err.to_string()))?;
+        let mut response = self
+            .agent
+            .post(&url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
+            .content_type("application/json")
+            .send(body.as_str())?;
         let status = u16::from(response.status());
         let body = response
             .body_mut()
@@ -315,7 +401,7 @@ impl FoqClient {
                 message: body.trim().to_string(),
             });
         }
-        serde_json::from_str(&body).map_err(|err| FoqError::InvalidResponse(err.to_string()))
+        sonic_rs::from_str(&body).map_err(|err| FoqError::InvalidResponse(err.to_string()))
     }
 }
 
@@ -328,13 +414,22 @@ impl FoqClient {
 ///
 /// The context ends with the diff of the commit, so cutting it from its end
 /// shortens the diff first and keeps the metadata of the commit.
+///
+/// The number of calls to the server is what costs time here, so the cut is
+/// not searched: the tokens of the whole context are counted once, the length
+/// of the prefix that fits is estimated from that count, and the estimate is
+/// checked. A binary search asked the server `log2(len)` times — more than
+/// thirty calls for a large diff, and two schemas meant two searches.
 fn fit_context(
     context: &str,
     schema: &DecisionSchema,
     limit: usize,
-    count: impl Fn(&str) -> Option<usize>,
+    mut count: impl FnMut(&str) -> Option<usize>,
 ) -> String {
-    let fits = |text: &str| {
+    // The count of the tokens is asked through one closure, so the caller
+    // can count the calls of the server. The closure is called directly
+    // every time — it is the only place that asks the server.
+    let fits = |text: &str, count: &mut dyn FnMut(&str) -> Option<usize>| {
         let prompt = schema.format_prompt(text);
         match count(&prompt) {
             Some(tokens) => tokens <= limit,
@@ -342,11 +437,9 @@ fn fit_context(
             None => prompt.len() <= limit * FALLBACK_CHARS_PER_TOKEN,
         }
     };
-
-    if fits(context) {
+    if fits(context, &mut count) {
         return context.to_string();
     }
-
     // The marker of the cut is part of the context, so it is counted while
     // the length of the remaining context is searched.
     let marked = |prefix: &str| {
@@ -358,22 +451,90 @@ fn fit_context(
         text
     };
 
-    // Find the longest prefix of the context that still fits.
-    let mut low = 0_usize;
-    let mut high = context.len();
-    while low < high {
-        let cut = boundary(context, (low + high).div_ceil(2));
-        if cut <= low {
-            break;
-        }
-        if fits(&marked(&context[..cut])) {
-            low = cut;
-        } else {
-            high = cut - 1;
-        }
+    // The tokens of the whole context, counted once. The prompt of the schema
+    // is longer than the context by a fixed amount — the question and the
+    // options — so the estimate below uses the length of the context, not of
+    // the prompt.
+    let whole = schema.format_prompt(context);
+    let Some(whole_tokens) = count(&whole) else {
+        // Without a tokenizer the pessimistic estimate decides, and the cut
+        // is found by the characters alone.
+        let allowed = limit * FALLBACK_CHARS_PER_TOKEN;
+        let overhead = whole.len().saturating_sub(context.len());
+        let cut = boundary(context, allowed.saturating_sub(overhead));
+        return marked(&context[..cut]);
+    };
+    if whole_tokens == 0 {
+        return marked("");
     }
 
-    marked(&context[..boundary(context, low)])
+    // The proportion of the context that fits, applied to the characters.
+    // The estimate is only a starting point: the tokens of a prefix are not
+    // the tokens of the whole context times the proportion of its
+    // characters, so the cut is corrected below.
+    let ratio = limit as f64 / whole_tokens as f64;
+    let mut cut = boundary(context, (context.len() as f64 * ratio) as usize);
+
+    // The cut is corrected until the prompt fits or the cut cannot be
+    // changed any more.
+    //
+    // A cut that is too long is shortened by a quarter, a cut that fits is
+    // stretched a little — and the stretching shrinks every time, so the
+    // search converges on the longest cut that fits without asking the
+    // server many times.
+    let mut too_long = false;
+    let mut step = (context.len() - cut) / 4 + 1;
+    for _ in 0..8 {
+        let candidate = marked(&context[..cut]);
+        if fits(&candidate, &mut count) {
+            // There is room left: try a longer cut, but never by more than
+            // the last step, so the cut converges.
+            let longer = boundary(context, cut + step);
+            if longer == cut || longer + step >= context.len() {
+                break;
+            }
+            cut = longer;
+            too_long = false;
+            step = step.max(1) / 2;
+            continue;
+        }
+        // The cut is too long: try a shorter one.
+        let shorter = boundary(context, cut * 3 / 4);
+        if shorter == cut {
+            break;
+        }
+        cut = shorter;
+        too_long = true;
+        step = step.max(1) * 2;
+    }
+
+    // The last check decided that the cut was too long, and the correction
+    // did not have enough steps: the prompt must fit, so the cut is
+    // shortened until it does.
+    if too_long {
+        while cut > 0 {
+            let shorter = boundary(context, cut * 3 / 4);
+            if shorter == cut {
+                break;
+            }
+            cut = shorter;
+            if fits(&marked(&context[..cut]), &mut count) {
+                break;
+            }
+        }
+    }
+    marked(&context[..cut])
+}
+
+/// The key of a context in the cache of the fitted prompts.
+///
+/// The text of the context is hashed: a commit that is rated twice has the
+/// same context, and the hash of a long diff is cheap compared to the call to
+/// the server that the fitting would make.
+fn cache_key(context: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    context.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The marker appended to a context that had to be shortened.
@@ -559,5 +720,58 @@ mod tests {
         assert_eq!(boundary("é", 1), 0);
         assert_eq!(boundary("é", 2), 2);
         assert_eq!(boundary("abc", 10), 3);
+    }
+
+    #[test]
+    fn the_fitting_asks_the_server_a_few_times_at_most() {
+        // A context that does not fit: the count of the tokens is asked once
+        // for the whole context and a few times for the estimate.
+        let schema = DecisionSchema::criticality();
+        let context = format!("Commit: abc\nDiff:\n{}", "+line\n".repeat(5000));
+        let fixed = counting_by_four(&schema.format_prompt("")).unwrap();
+        let limit = fixed + 100;
+        let mut calls = 0_usize;
+        let fitted = fit_context(&context, &schema, limit, |text| {
+            calls += 1;
+            counting_by_four(text)
+        });
+        assert!(fitted.len() < context.len());
+        // The old path asked the server once per step of the binary search:
+        // more than a dozen times for a context of this size.
+        assert!(calls <= 8, "the fitting asked the server {calls} times");
+    }
+
+    #[test]
+    fn the_fitting_of_a_context_that_fits_asks_the_server_once() {
+        let schema = DecisionSchema::criticality();
+        let context = "Commit: abc\nTitre: small\n";
+        let mut calls = 0_usize;
+        let fitted = fit_context(&context, &schema, 1024, |text| {
+            calls += 1;
+            counting_by_four(text)
+        });
+        assert_eq!(fitted, context);
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn the_cache_of_the_fitted_prompts_serves_the_second_question() {
+        let client = FoqClient::new("http://127.0.0.1:1");
+        let context = "Commit: abc\nTitre: small\n";
+        // The client cannot reach the server, so the fitting falls back to
+        // the pessimistic estimate — the cache is still filled.
+        let first = client.fit_prompt(context, &DecisionSchema::criticality());
+        let second = client.fit_prompt(context, &DecisionSchema::complexity());
+        // The two schemas differ in their question and their options, so the
+        // prompts differ; the context they carry is the same.
+        assert_ne!(first, second);
+        assert!(first.contains("Commit: abc"));
+        assert!(second.contains("Commit: abc"));
+    }
+
+    #[test]
+    fn the_key_of_a_context_is_stable_and_different_for_different_texts() {
+        assert_eq!(cache_key("Commit: abc"), cache_key("Commit: abc"));
+        assert_ne!(cache_key("Commit: abc"), cache_key("Commit: abd"));
     }
 }

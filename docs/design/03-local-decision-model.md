@@ -90,11 +90,33 @@ The client therefore asks the runtime:
 * `/props` → the size of the window, remembered after the first answer,
 * `/tokenize` → the exact number of tokens of a prompt.
 
+The window is asked once per process: the dashboard keeps one client of the
+runtime and shares it between every rating, so the second commit does not ask
+the runtime how big its window is. The client also keeps the connection to
+the runtime open, so the questions of a series of commits travel over one
+connection instead of a new one each.
+
 When the prompt does not fit, the context is cut from its end — the diff is
 shortened first, the metadata of the commit survives — until the prompt fits.
 The cut is marked with `… (contexte tronqué)`. The length of the longest
-fitting prefix is found with a binary search, so the prompt uses as much of
-the window as it can. See [ADR-06](../adr/ADR-06-context-fitted-prompts.md).
+fitting prefix is estimated from the number of tokens of the whole context and
+then corrected: the estimate is asked of the runtime once, the corrections are
+asked a few more times, and the prompt uses as much of the window as it can.
+See [ADR-06](../adr/ADR-06-context-fitted-prompts.md).
+
+A commit is rated twice — once for the criticality, once for the complexity —
+and both questions read the same context. The fitted context is therefore
+remembered by the client, and the second question of a commit asks the runtime
+nothing at all.
+
+The number of calls to the runtime for one rating, measured against the live
+server:
+
+| Question | Calls |
+|----------|-------|
+| The criticality of a commit | 1 |
+| The complexity of the same commit | 1 |
+| The whole rating | 4 (the window, the count, two completions) |
 
 ## The runtime
 

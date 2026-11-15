@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
@@ -72,7 +73,7 @@ pub enum WorkerMessage {
 }
 
 /// The settings of the local decision model.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FoqSettings {
     /// Base URL of the decision server.
     pub url: String,
@@ -84,6 +85,22 @@ pub struct FoqSettings {
     pub min_confidence: f64,
     /// Timeout of a single request to the decision server.
     pub timeout: std::time::Duration,
+}
+
+impl Default for FoqSettings {
+    /// The settings of a model that is not configured yet.
+    ///
+    /// The first assessment carries the settings of the user and replaces
+    /// them.
+    fn default() -> Self {
+        Self {
+            url: "http://127.0.0.1:8089".to_string(),
+            model: "foq".to_string(),
+            profile: CalibrationProfile::bare(),
+            min_confidence: 0.8,
+            timeout: std::time::Duration::from_secs(120),
+        }
+    }
 }
 
 impl FoqSettings {
@@ -102,6 +119,17 @@ pub struct Worker {
     runtime: tokio::runtime::Runtime,
     sender: Sender<WorkerMessage>,
     receiver: Receiver<WorkerMessage>,
+    /// The client of the local decision model.
+    ///
+    /// The client is shared by every assessment: it keeps the connection to
+    /// the server open, it remembers the size of the context window and it
+    /// remembers the prompts it already fitted. A client per commit threw
+    /// all of that away and asked the server for its properties again.
+    client: Arc<FoqClient>,
+    /// The settings the client was built from.
+    ///
+    /// A change of the settings builds a new client.
+    settings: FoqSettings,
 }
 
 impl Worker {
@@ -112,11 +140,26 @@ impl Worker {
             .enable_all()
             .build()?;
         let (sender, receiver) = channel();
+        // The default settings are replaced by the first assessment, which
+        // carries the configuration of the user.
+        let settings = FoqSettings::default();
+        let client = Arc::new(settings.client());
         Ok(Self {
             runtime,
             sender,
             receiver,
+            client,
+            settings,
         })
+    }
+
+    /// The client of the local decision model, rebuilt when the settings
+    /// change.
+    fn client(&self, settings: &FoqSettings) -> Arc<FoqClient> {
+        if &self.settings == settings {
+            return Arc::clone(&self.client);
+        }
+        Arc::new(settings.client())
     }
 
     /// Take every message that arrived since the last call.
@@ -173,11 +216,17 @@ impl Worker {
     /// sees the change it has to judge.
     pub fn assess(&self, settings: FoqSettings, repo_path: PathBuf, commit: UpstreamCommit) {
         let sender = self.sender.clone();
+        let client = self.client(&settings);
         self.runtime.spawn_blocking(move || {
+            let started = Instant::now();
             let patch = patch_of(&repo_path, &commit.sha);
-            let client = settings.client();
             match fsrs_ai::assess_commit(&client, &commit, patch.as_deref()) {
                 Ok(assessment) => {
+                    tracing::info!(
+                        sha = %commit.sha,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        "the commit was assessed"
+                    );
                     let _ = sender.send(WorkerMessage::Assessed { assessment });
                 }
                 Err(error) => {
