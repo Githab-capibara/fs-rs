@@ -8,7 +8,6 @@
 //! The request payload is byte-for-byte identical to the one sent by the
 //! reference Python client, so the same fine-tuned model behaves identically.
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -104,6 +103,12 @@ impl std::fmt::Debug for FoqClient {
             .field("timeout", &self.timeout)
             .finish()
     }
+}
+
+/// Payload sent to `/tokenize`.
+#[derive(Debug, Serialize)]
+struct TokenizeRequest<'a> {
+    content: &'a str,
 }
 
 /// Payload sent to `/completion`.
@@ -299,13 +304,17 @@ impl FoqClient {
     pub fn count_tokens(&self, text: &str) -> Option<usize> {
         let url = format!("{}/tokenize", self.base_url);
         self.count_request();
+        // The body is written by hand: the feature `json` of the HTTP
+        // client would bring a second serializer for one small request.
+        let body = sonic_rs::to_string(&TokenizeRequest { content: text }).ok()?;
         let response = self
             .agent
             .post(&url)
             .config()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
-            .send_json(serde_json::json!({ "content": text }))
+            .content_type("application/json")
+            .send(body.as_str())
             .ok()?;
         let body = response.into_body().read_to_string().ok()?;
         let value = serde_json::from_str::<serde_json::Value>(&body).ok()?;

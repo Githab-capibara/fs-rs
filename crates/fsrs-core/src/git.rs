@@ -301,16 +301,19 @@ impl GitRepo {
         let diff =
             self.repo
                 .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))?;
-        let mut out = String::new();
+        // The bytes of the patch are collected first and the text is read
+        // once at the end: every line used to be validated on its own, and
+        // a line that ends in the middle of a character was replaced.
+        let mut out: Vec<u8> = Vec::with_capacity(64 * 1024);
         diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
             match line.origin() {
-                '+' | '-' | ' ' => out.push(line.origin()),
+                '+' | '-' | ' ' => out.push(line.origin() as u8),
                 _ => {}
             }
-            out.push_str(&String::from_utf8_lossy(line.content()));
+            out.extend_from_slice(line.content());
             true
         })?;
-        Ok(out)
+        Ok(String::from_utf8_lossy(&out).into_owned())
     }
 
     /// Create `branch` from `base` and check it out.
