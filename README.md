@@ -127,6 +127,34 @@ The build is offline-friendly once the dependencies are cached:
 cargo build --release --offline
 ```
 
+### The tuned build
+
+The dashboard is built for the machine it runs on: the instructions of the
+processor, one crate for the whole program, and a profile of the real work —
+the commits of a real repository rated by the local model, and the missing
+commits of a real fork listed:
+
+```bash
+FSRS_PGO_REPOSITORY=/path/to/repo FSRS_PGO_GIT_REPOSITORY=/path/to/fork \
+    scripts/build-pgo.sh
+```
+
+The result is in `target/pgo/release/fsrs`. The script needs
+`llvm-profdata` of the toolchain (`rustup component add llvm-tools-preview`).
+See [ADR-11](docs/adr/ADR-11-build-for-the-machine.md).
+
+The layout of the code can be laid out again by BOLT, with a profile of a real
+run of the dashboard:
+
+```bash
+scripts/record-bolt-profile.sh target/pgo/release/fsrs
+FSRS_PGO_BOLT_DATA=target/pgo/bolt.fdata scripts/build-pgo.sh --bolt
+```
+
+The measurement of it is in
+[ADR-15](docs/adr/ADR-15-lay-the-code-out-again-with-bolt.md): the tool
+works, and the time of the program is not in the code it moves.
+
 ## Test
 
 ```bash

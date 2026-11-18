@@ -32,6 +32,27 @@ pub const DEFAULT_CONTEXT_TOKENS: usize = 1024;
 /// Deliberately pessimistic: a diff of code tokenises worse than prose.
 const FALLBACK_CHARS_PER_TOKEN: usize = 2;
 
+/// The number of the slots assumed when the server does not report them.
+///
+/// One slot is the safe assumption: a request that waits in the queue of the
+/// server waits for the model anyway.
+const DEFAULT_SLOTS: usize = 1;
+
+/// Read the number of the slots from the properties of the server.
+///
+/// The runtime of the model reports it at the top level of `/props`:
+///
+/// ```json
+/// {"total_slots": 1, "default_generation_settings": {"n_ctx": 4096}}
+/// ```
+fn parse_slots(props: &serde_json::Value) -> Option<usize> {
+    props
+        .get("total_slots")
+        .and_then(|value| value.as_u64())
+        .map(|value| value as usize)
+        .filter(|value| *value > 0)
+}
+
 /// Errors produced while talking to the decision server.
 #[derive(Debug, thiserror::Error)]
 pub enum FoqError {
@@ -76,6 +97,11 @@ pub struct FoqClient {
     model: String,
     /// The context window of the server, learned once and then reused.
     context_size: Arc<OnceLock<usize>>,
+    /// The properties of the server, learned once and then reused.
+    ///
+    /// The size of the window and the number of the slots are both in the
+    /// answer of `/props`, so the server is asked once for both of them.
+    props: Arc<OnceLock<Option<serde_json::Value>>>,
     /// The HTTP agent of every request.
     ///
     /// One agent keeps the connection to the server alive: the dashboard asks
@@ -180,6 +206,7 @@ impl FoqClient {
             min_confidence: 0.8,
             model: "foq".to_string(),
             context_size: Arc::new(OnceLock::new()),
+            props: Arc::new(OnceLock::new()),
             agent,
             fitted: Arc::new(Mutex::new(HashMap::new())),
             on_request: None,
@@ -268,8 +295,27 @@ impl FoqClient {
         *self.context_size.get_or_init(|| self.probe_context_size())
     }
 
-    /// Ask the server how many tokens its context window holds.
-    fn probe_context_size(&self) -> usize {
+    /// The number of requests the server can serve at the same time.
+    ///
+    /// The runtime of the model splits its context between slots, and every
+    /// slot serves one request at a time. The number is asked from the server
+    /// once and then remembered. A server that does not answer is assumed to
+    /// have one slot — the safe assumption, because a request that waits in
+    /// the queue of the server is a request that waits for the model.
+    pub fn slots(&self) -> usize {
+        self.props()
+            .as_ref()
+            .and_then(parse_slots)
+            .unwrap_or(DEFAULT_SLOTS)
+    }
+
+    /// The properties of the server, asked once.
+    fn props(&self) -> Option<serde_json::Value> {
+        self.props.get_or_init(|| self.fetch_props()).clone()
+    }
+
+    /// Ask the server for its properties.
+    fn fetch_props(&self) -> Option<serde_json::Value> {
         let url = format!("{}/props", self.base_url);
         self.count_request();
         let Ok(response) = self
@@ -280,17 +326,23 @@ impl FoqClient {
             .build()
             .call()
         else {
-            return DEFAULT_CONTEXT_TOKENS;
+            return None;
         };
         let Ok(body) = response.into_body().read_to_string() else {
-            return DEFAULT_CONTEXT_TOKENS;
+            return None;
         };
-        let Ok(props) = serde_json::from_str::<serde_json::Value>(&body) else {
-            return DEFAULT_CONTEXT_TOKENS;
-        };
-        props
-            .pointer("/default_generation_settings/n_ctx")
-            .and_then(|value| value.as_u64())
+        serde_json::from_str(&body).ok()
+    }
+
+    /// Ask the server how many tokens its context window holds.
+    fn probe_context_size(&self) -> usize {
+        self.props()
+            .as_ref()
+            .and_then(|props| {
+                props
+                    .pointer("/default_generation_settings/n_ctx")
+                    .and_then(|value| value.as_u64())
+            })
             .map(|value| value as usize)
             .filter(|value| *value > 0)
             .unwrap_or(DEFAULT_CONTEXT_TOKENS)
@@ -391,14 +443,21 @@ impl FoqClient {
         // general purpose serializer.
         let body = sonic_rs::to_string(payload)
             .map_err(|err| FoqError::InvalidResponse(err.to_string()))?;
-        let mut response = self
-            .agent
-            .post(&url)
-            .config()
-            .timeout_global(Some(self.timeout))
-            .build()
-            .content_type("application/json")
-            .send(body.as_str())?;
+        let mut response = match self.send_completion(&url, &body) {
+            Ok(response) => response,
+            Err(error) if is_a_closed_connection(&error) => {
+                // The server closed the connection of the pool while it was
+                // idle. The request is repeated on a fresh connection: the
+                // rating of a commit is a question that takes seconds, and
+                // losing it to a closed socket is a waste.
+                tracing::warn!(
+                    "the decision server closed the connection, the request is repeated"
+                );
+                self.count_request();
+                self.send_completion(&url, &body)?
+            }
+            Err(error) => return Err(FoqError::Http(error)),
+        };
         let status = u16::from(response.status());
         let body = response
             .body_mut()
@@ -412,6 +471,45 @@ impl FoqClient {
         }
         sonic_rs::from_str(&body).map_err(|err| FoqError::InvalidResponse(err.to_string()))
     }
+
+    /// Send one completion request.
+    fn send_completion(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        self.agent
+            .post(url)
+            .config()
+            .timeout_global(Some(self.timeout))
+            .build()
+            .content_type("application/json")
+            .send(body)
+    }
+}
+
+/// Whether the error is a connection that the server closed.
+///
+/// The runtime of the model keeps the connection of the client in a pool and
+/// closes the idle ones. A request that is sent on such a connection fails
+/// before it reaches the server, and it is worth one more attempt.
+///
+/// Only the failures of a connection that was closed are worth the attempt.
+/// A server that does not listen, a request that ran out of time and an
+/// answer that was refused are not: repeating them only makes the wait of
+/// the user longer.
+fn is_a_closed_connection(error: &ureq::Error) -> bool {
+    let ureq::Error::Io(error) = error else {
+        return false;
+    };
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::NotConnected
+    )
 }
 
 /// Cut a context down until the prompt of `schema` fits into `limit` tokens.
@@ -594,6 +692,9 @@ pub fn extract_logprobs(response: &CompletionResponse) -> Result<BTreeMap<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn response_with(tokens: &[(&str, f64)]) -> CompletionResponse {
         CompletionResponse {
@@ -661,6 +762,144 @@ mod tests {
             .with_profile(CalibrationProfile::with_lora());
         assert_eq!(client.model(), "foq-system1");
         assert!((client.scaler().temperature() - 2.6353).abs() < 1e-9);
+    }
+
+    /// A server that answers `/props` with the given body.
+    ///
+    /// The server counts the requests it received, so a test can check that
+    /// the client asks once.
+    fn spawn_props_server(body: &'static str) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("the port should be free");
+        let address = listener.local_addr().expect("the address should be known");
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&counter);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut request = [0_u8; 2048];
+                let _ = stream.read(&mut request);
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://{address}"), counter)
+    }
+
+    #[test]
+    fn the_number_of_the_slots_is_read_from_the_server() {
+        let (url, requests) = spawn_props_server(
+            r#"{"total_slots": 4, "default_generation_settings": {"n_ctx": 4096}}"#,
+        );
+        let client = FoqClient::new(&url);
+        assert_eq!(client.slots(), 4);
+        // The size of the window and the number of the slots are both in the
+        // same answer, so the server is asked once for the two of them.
+        assert_eq!(client.context_size(), 4096);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_server_that_reports_no_slots_is_assumed_to_have_one() {
+        let (url, _requests) =
+            spawn_props_server(r#"{"default_generation_settings": {"n_ctx": 4096}}"#);
+        let client = FoqClient::new(&url);
+        assert_eq!(client.slots(), 1);
+    }
+
+    #[test]
+    fn a_server_that_does_not_answer_is_assumed_to_have_one_slot() {
+        // A port that nothing listens on.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("the port should be free");
+        let address = listener.local_addr().expect("the address should be known");
+        drop(listener);
+        let client = FoqClient::new(&format!("http://{address}"));
+        assert_eq!(client.slots(), 1);
+        assert_eq!(client.context_size(), DEFAULT_CONTEXT_TOKENS);
+    }
+
+    #[test]
+    fn the_number_of_the_slots_is_not_taken_from_a_useless_answer() {
+        let props = serde_json::json!({"total_slots": 0});
+        assert_eq!(parse_slots(&props), None);
+        let props = serde_json::json!({"total_slots": "many"});
+        assert_eq!(parse_slots(&props), None);
+        let props = serde_json::json!({});
+        assert_eq!(parse_slots(&props), None);
+    }
+
+    /// A server that closes the first completion connection without an answer.
+    ///
+    /// The runtime of the model closes the idle connections of the pool, and
+    /// a request that is sent on such a connection fails before it reaches
+    /// the server.
+    fn spawn_server_that_closes_the_first_completion() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("the port should be free");
+        let address = listener.local_addr().expect("the address should be known");
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&counter);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else {
+                    continue;
+                };
+                let mut request = [0_u8; 8192];
+                let read = stream.read(&mut request).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]);
+                let body = if request.starts_with("POST /completion") {
+                    let attempt = counted.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        // The connection dies without an answer.
+                        continue;
+                    }
+                    r#"{"completion_probabilities": [{"top_logprobs": [{"token": "A", "logprob": -0.1}]}]}"#
+                } else if request.starts_with("POST /tokenize") {
+                    r#"{"tokens": [1, 2, 3]}"#
+                } else {
+                    r#"{"total_slots": 1, "default_generation_settings": {"n_ctx": 4096}}"#
+                };
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://{address}"), counter)
+    }
+
+    #[test]
+    fn a_request_that_lost_its_connection_is_repeated() {
+        let (url, attempts) = spawn_server_that_closes_the_first_completion();
+        let client = FoqClient::new(&url);
+        let decision = client
+            .decide("Commit: abc\n", &DecisionSchema::criticality())
+            .expect("the request should be repeated on a fresh connection");
+        assert_eq!(decision.decision.key, "A");
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn only_a_connection_that_was_closed_is_worth_another_attempt() {
+        let closed = ureq::Error::Io(std::io::Error::from(std::io::ErrorKind::UnexpectedEof));
+        let reset = ureq::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionReset));
+        assert!(is_a_closed_connection(&closed));
+        assert!(is_a_closed_connection(&reset));
+
+        // A server that does not listen, an answer that was refused and a
+        // request that ran out of time are not worth the wait of a second
+        // attempt.
+        let refused = ureq::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+        assert!(!is_a_closed_connection(&refused));
+        assert!(!is_a_closed_connection(&ureq::Error::StatusCode(500)));
+        assert!(!is_a_closed_connection(&ureq::Error::ConnectionFailed));
     }
 
     /// A tokenizer that counts one token per four characters.

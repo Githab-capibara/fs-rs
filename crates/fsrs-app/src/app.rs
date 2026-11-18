@@ -47,6 +47,16 @@ pub fn process_started() -> Instant {
 /// keeps the queue short instead of flooding it with requests.
 const MAX_CONCURRENT_ASSESSMENTS: usize = 2;
 
+/// The number of the ratings that may be in flight at the same time.
+///
+/// The server of the model serves one request at a time per slot, so the
+/// number of the slots is the real limit. A server that reports no slots is
+/// assumed to have one: a request that waits in the queue of the server waits
+/// for the model anyway.
+fn concurrent_assessment_limit(slots: usize) -> usize {
+    MAX_CONCURRENT_ASSESSMENTS.min(slots.max(1))
+}
+
 /// One row of the prepared screenshot.
 ///
 /// The rows carry the ratings of the local model, so that the picture of the
@@ -129,6 +139,13 @@ pub struct FsrsApp {
     pending_events: Vec<fsrs_core::RunEvent>,
     /// The assessments that are currently running.
     assessment_in_flight: usize,
+    /// The number of the slots of the decision server.
+    ///
+    /// The server of the model serves one request at a time per slot. The
+    /// number is asked once, in the background, and bounds the number of the
+    /// ratings that are in flight: a request that waits in the queue of the
+    /// server waits for the model anyway.
+    assessment_slots: usize,
     /// The last message for the user.
     status: String,
     /// The last error for the user.
@@ -194,6 +211,7 @@ impl FsrsApp {
             assessment_queue: VecDeque::new(),
             pending_events: Vec::new(),
             assessment_in_flight: 0,
+            assessment_slots: 1,
             status: String::new(),
             error: None,
             prepared: false,
@@ -204,6 +222,11 @@ impl FsrsApp {
         if discovery {
             app.refresh_models();
         }
+        // The number of the slots of the decision server bounds the number of
+        // the ratings that are in flight. It is asked in the background, so
+        // the window does not wait for the server.
+        let settings = app.foq_settings();
+        app.worker.probe_slots(settings);
         app
     }
 
@@ -360,6 +383,7 @@ impl FsrsApp {
                     self.error = Some(format!("оценка {sha}: {error}"));
                     let _ = repo_id;
                 }
+                WorkerMessage::SlotsKnown { slots } => self.assessment_slots = slots.max(1),
                 WorkerMessage::ModelsLoaded { models } => {
                     self.models = models;
                     if let Some(picker) = self.picker.as_mut() {
@@ -583,7 +607,7 @@ impl FsrsApp {
 
     /// Send the queued commits to the local decision model.
     fn dispatch_assessments(&mut self) {
-        while self.assessment_in_flight < MAX_CONCURRENT_ASSESSMENTS {
+        while self.assessment_in_flight < self.max_concurrent_assessments() {
             let Some((index, sha)) = self.assessment_queue.pop_front() else {
                 break;
             };
@@ -606,6 +630,16 @@ impl FsrsApp {
             self.worker.assess(settings, path, commit);
             self.assessment_in_flight += 1;
         }
+    }
+
+    /// The number of the ratings that may be in flight at the same time.
+    ///
+    /// The limit is the number of the slots of the server, and never more
+    /// than the constant of the program: a server with one slot is asked one
+    /// question at a time, because the questions that wait in its queue wait
+    /// for the model anyway.
+    fn max_concurrent_assessments(&self) -> usize {
+        concurrent_assessment_limit(self.assessment_slots)
     }
 
     /// The settings of the local decision model.
@@ -1357,5 +1391,15 @@ mod tests {
     fn a_commit_id_is_shortened() {
         assert_eq!(short_sha("0123456789abcdef"), "01234567");
         assert_eq!(short_sha("abc"), "abc");
+    }
+
+    #[test]
+    fn the_number_of_the_ratings_follows_the_slots_of_the_server() {
+        // One slot: one rating at a time.
+        assert_eq!(concurrent_assessment_limit(1), 1);
+        // More slots than the constant of the program: the constant wins.
+        assert_eq!(concurrent_assessment_limit(8), MAX_CONCURRENT_ASSESSMENTS);
+        // A server that reports nothing is assumed to have one slot.
+        assert_eq!(concurrent_assessment_limit(0), 1);
     }
 }

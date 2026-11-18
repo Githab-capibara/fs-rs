@@ -24,6 +24,10 @@ anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The serializer of the big payloads: the prompts of the decision model and
+# the lists of files of the commits. It is twice as fast as the general
+# purpose one on the long strings.
+sonic-rs = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "sync", "time", "fs"] }
 tracing = { version = "0.1", features = ["release_max_level_info"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

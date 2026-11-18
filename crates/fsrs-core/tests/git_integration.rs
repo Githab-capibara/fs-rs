@@ -177,6 +177,92 @@ fn incremental_listing_reuses_the_known_statistics_and_skips_the_dead_code() {
 }
 
 #[test]
+fn the_metadata_of_a_commit_is_read_without_a_single_diff() {
+    let temp = tempfile::tempdir().unwrap();
+    let upstream = make_upstream(temp.path());
+    let fork = make_fork(temp.path(), &upstream);
+    add_second_upstream_commit(&upstream);
+
+    let repo = GitRepo::open(&fork).unwrap();
+    repo.ensure_upstream_remote(upstream.to_str().unwrap())
+        .unwrap();
+    repo.fetch_upstream("main").unwrap();
+
+    // The metadata is the cheap half of the description: the same values as
+    // the ones of the full listing, without the statistics.
+    let metadata = repo.pending_commit_metadata("main").unwrap();
+    assert_eq!(metadata.len(), 1);
+    assert_eq!(metadata[0].summary, "Second upstream commit");
+    assert_eq!(metadata[0].body, "With a body");
+    assert_eq!(metadata[0].sha.len(), 40);
+    assert_eq!(metadata[0].short_sha.len(), 8);
+    assert_eq!(metadata[0].author, "Upstream");
+    assert_eq!(metadata[0].author_email, "upstream@example.com");
+
+    // The two halves join into the description of the commit.
+    let pending = repo.pending_commits("main").unwrap();
+    assert_eq!(pending[0].sha, metadata[0].sha);
+    assert_eq!(pending[0].short_sha, metadata[0].short_sha);
+    assert_eq!(pending[0].summary, metadata[0].summary);
+    assert_eq!(pending[0].body, metadata[0].body);
+    assert_eq!(pending[0].author, metadata[0].author);
+    assert_eq!(pending[0].author_email, metadata[0].author_email);
+    assert_eq!(pending[0].authored_at, metadata[0].authored_at);
+    assert_eq!(pending[0].committed_at, metadata[0].committed_at);
+    // The statistics are the expensive half, and they are only in the full
+    // description.
+    assert_eq!(pending[0].files, vec!["b.txt".to_string()]);
+    assert_eq!(pending[0].insertions, 1);
+}
+
+#[test]
+fn the_parts_of_a_commit_join_into_one_description() {
+    let meta = fsrs_core::git::CommitMeta {
+        sha: "a".repeat(40),
+        short_sha: "a".repeat(8),
+        summary: "Title".to_string(),
+        body: "Body".to_string(),
+        author: "Author".to_string(),
+        author_email: "author@example.com".to_string(),
+        authored_at: 10,
+        committed_at: 20,
+    };
+    let stats = fsrs_core::git::CommitStats {
+        files: vec!["a.txt".to_string()],
+        insertions: 3,
+        deletions: 1,
+    };
+    let pending = fsrs_core::git::PendingCommit::from_parts(meta, stats);
+    assert_eq!(pending.sha, "a".repeat(40));
+    assert_eq!(pending.summary, "Title");
+    assert_eq!(pending.authored_at, 10);
+    assert_eq!(pending.committed_at, 20);
+    assert_eq!(pending.files, vec!["a.txt".to_string()]);
+    assert_eq!(pending.insertions, 3);
+    assert_eq!(pending.deletions, 1);
+}
+
+#[test]
+fn the_git_options_of_the_performance_are_turned_off() {
+    // The call is global to the process and must not panic. The listing still
+    // works after it.
+    fsrs_core::git::configure_performance();
+    let temp = tempfile::tempdir().unwrap();
+    let upstream = make_upstream(temp.path());
+    let fork = make_fork(temp.path(), &upstream);
+    add_second_upstream_commit(&upstream);
+
+    let repo = GitRepo::open(&fork).unwrap();
+    repo.ensure_upstream_remote(upstream.to_str().unwrap())
+        .unwrap();
+    repo.fetch_upstream("main").unwrap();
+    let pending = repo.pending_commits("main").unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].files, vec!["b.txt".to_string()]);
+    assert_eq!(pending[0].insertions, 1);
+}
+
+#[test]
 fn upstream_remote_is_created_and_repointed() {
     let temp = tempfile::tempdir().unwrap();
     let upstream = make_upstream(temp.path());

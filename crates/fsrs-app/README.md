@@ -37,6 +37,14 @@ else runs on a Tokio runtime with two workers. The store is a `rusqlite`
 connection, which is not `Sync`, so it stays on the UI thread and needs
 neither a lock nor a pool.
 
+The worker holds one client of the local decision model and shares it with
+every rating, so the connection to the server, the size of its window and the
+prompts it already fitted are reused instead of asked again for every commit.
+The client is replaced only when the settings of the user really change. The
+number of the slots of the server bounds the number of the ratings that are
+in flight: a request that waits in the queue of the server waits for the
+model anyway.
+
 ## Related documents
 
 | Document | Purpose |
@@ -45,5 +53,6 @@ neither a lock nor a pool.
 | [ADR-02](../../docs/adr/ADR-02-opencode-mini-for-the-manual-terminal.md) | Why the manual terminal runs `opencode mini` |
 | [ADR-10](../../docs/adr/ADR-10-the-decision-server-is-asked-four-times.md) | Why the dashboard asks the decision server four times per commit |
 | [ADR-11](../../docs/adr/ADR-11-build-for-the-machine.md) | Why the build is tuned for the machine it runs on |
+| [ADR-13](../../docs/adr/ADR-13-rate-the-commits-one-at-a-time.md) | Why the ratings never outnumber the slots of the decision server |
 | [Design note — the dashboard layout](../../docs/design/01-dashboard-layout.md) | The window, the threads, the picker, the screenshot |
 | [Getting started](../../docs/guides/01-getting-started.md) | The first run of the dashboard |

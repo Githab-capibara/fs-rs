@@ -101,6 +101,16 @@ check(
     "timeout: Duration::from_secs(120)" in client,
     "the default timeout of FoqClient::new",
 )
+check(
+    "The client asks the server how many requests it serves at the same time",
+    "pub fn slots(&self) -> usize" in client and '"total_slots"' in client,
+    "FoqClient::slots",
+)
+check(
+    "A request that lost its connection is repeated",
+    "fn is_a_closed_connection" in client and "the request is repeated" in client,
+    "the retry of the completion request",
+)
 calibration = read("crates/fsrs-ai/src/calibration.rs")
 check(
     "The temperatures of the profiles are the ones in the code",
@@ -162,9 +172,23 @@ check(
 # --- The dashboard ----------------------------------------------------
 app = read("crates/fsrs-app/src/app.rs")
 check(
-    "The dashboard keeps two ratings in flight",
-    "MAX_CONCURRENT_ASSESSMENTS: usize = 2" in app,
-    "MAX_CONCURRENT_ASSESSMENTS",
+    "The dashboard keeps two ratings in flight at most, and never more than the slots of the server",
+    "MAX_CONCURRENT_ASSESSMENTS: usize = 2" in app
+    and "fn concurrent_assessment_limit(slots: usize) -> usize" in app,
+    "MAX_CONCURRENT_ASSESSMENTS and the limit of the slots",
+)
+
+# --- The git layer ----------------------------------------------------
+git = read("crates/fsrs-core/src/git.rs")
+check(
+    "The options of the performance of git2 are turned off",
+    "enable_caching(false)" in git and "strict_hash_verification(false)" in git,
+    "configure_performance",
+)
+check(
+    "The metadata of a commit can be read without a diff",
+    "pub fn commit_meta" in git and "pub fn pending_commit_metadata" in git,
+    "the split of the metadata and the statistics of a commit",
 )
 
 # --- The live tests ---------------------------------------------------
@@ -195,6 +219,35 @@ check(
     f"criticality={report['criticality']} complexity={report['complexity']}",
 )
 
+# --- The build ---------------------------------------------------------
+build = read("scripts/build-pgo.sh")
+check(
+    "The build with a profile can apply BOLT to the binary",
+    '--bolt' in build and "FSRS_PGO_BOLT_DATA" in build and "llvm-bolt" in build,
+    "the BOLT step of scripts/build-pgo.sh",
+)
+check(
+    "The training of the profile rates the commits of a real repository",
+    "examples/benchmark" in build and "FSRS_PGO_REPOSITORY" in build,
+    "the default training command of scripts/build-pgo.sh",
+)
+check(
+    "The profile of BOLT is recorded from a real run of the dashboard",
+    "branches:u" in read("scripts/record-bolt-profile.sh")
+    and "perf2bolt" in read("scripts/record-bolt-profile.sh"),
+    "scripts/record-bolt-profile.sh",
+)
+check(
+    "The start of the program is measured with interleaved runs",
+    "interleaved" in read("scripts/measure-startup.py"),
+    "scripts/measure-startup.py",
+)
+check(
+    "The listing of the missing commits is measured against a real fork",
+    "sync finished" in read("scripts/measure-sync.sh"),
+    "scripts/measure-sync.sh",
+)
+
 # --- The files of the documentation -----------------------------------
 for relative in (
     "LICENSE",
@@ -213,6 +266,10 @@ for relative in (
     "crates/fsrs-app/README.md",
     "deny.toml",
     ".github/workflows/ci.yml",
+    "scripts/build-pgo.sh",
+    "scripts/record-bolt-profile.sh",
+    "scripts/measure-startup.py",
+    "scripts/measure-sync.sh",
 ):
     path = ROOT / relative
     check(

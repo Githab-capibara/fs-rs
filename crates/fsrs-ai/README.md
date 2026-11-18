@@ -19,6 +19,7 @@ and how complex its port is.
 | Tool | What it does |
 |------|--------------|
 | [`examples/benchmark.rs`](examples/benchmark.rs) | Rates the commits of a repository and writes the report as JSON |
+| [`examples/slot-probe.rs`](examples/slot-probe.rs) | Measures the server of the model: the number of its slots, and the time of the requests one after another against the time of the requests in parallel |
 
 ```bash
 cargo run -p fsrs-ai --example benchmark -- /path/to/upstream HEAD 60 \
@@ -53,6 +54,17 @@ server:
 The client keeps one connection to the runtime, remembers the size of the
 window and remembers the context it already fitted, so a series of commits
 asks the runtime once for its properties instead of once per commit.
+
+The number of the slots of the runtime — the number of the requests it serves
+at the same time — comes from the same answer, so it costs no extra call. The
+dashboard never keeps more ratings in flight than the runtime has slots: a
+request that waits in the queue of the runtime waits for the model anyway.
+
+The runtime closes the idle connections of its pool. A question that is sent
+on such a connection fails before it reaches the server, so the client
+repeats it once on a fresh connection. Only a connection that was closed is
+worth another attempt: a server that does not listen, an answer that was
+refused and a question that ran out of time are not.
 
 ## Related documents
 

@@ -33,6 +33,9 @@ little as possible:
 
 * the client holds one `ureq::Agent`, created once and reused, so the
   connection to the server stays open between the questions,
+* a question that is sent on a connection the server closed while it was idle
+  is repeated once on a fresh connection — only that failure is worth another
+  attempt, a refused answer and a timeout are not,
 * the size of the window is asked once per client and remembered
   (`OnceLock`),
 * the fitted context is remembered by the hash of its text, so the second
@@ -57,7 +60,9 @@ untyped answers of `/props` and `/tokenize` stay with `serde_json`.
   ten times instead of fourteen.
 - **Harder:** the client holds a cache of the fitted contexts, so it has to
   be bounded — the cache is per client, and a client lives as long as the
-  dashboard.
+  dashboard. The same client is now shared by every rating of the dashboard,
+  so the settings of the user are behind a lock: the client is replaced only
+  when the settings really changed.
 - **Given up:** the exact longest prefix that fits is not found. The estimate
   is corrected until the prompt fits or the cut cannot be changed, which
   costs a few calls and can leave a small amount of the window unused.

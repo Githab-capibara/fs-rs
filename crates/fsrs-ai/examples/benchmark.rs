@@ -92,9 +92,7 @@ fn main() -> anyhow::Result<()> {
     let client = FoqClient::new(&url)
         .with_profile(CalibrationProfile::with_lora())
         .with_timeout(std::time::Duration::from_secs(180));
-    if !client.is_ready() {
-        anyhow::bail!("the decision model is not answering on {url}");
-    }
+    wait_for_the_server(&client, &url)?;
 
     let git = GitRepo::open(&repository)?;
     let shas = list_commits(&repository, &revision, limit)?;
@@ -173,6 +171,10 @@ fn main() -> anyhow::Result<()> {
         .map(|row| row.latency_ms)
         .collect();
     latencies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // A run that rated nothing is a failed run, and the exit code has to say
+    // so: the build with a profile uses this command to train, and a profile
+    // of a run that did nothing is a profile of nothing.
+    let every_commit_failed = !rows.is_empty() && failed == rows.len();
     let report = Report {
         repository: repository.display().to_string(),
         revision: revision.clone(),
@@ -195,7 +197,28 @@ fn main() -> anyhow::Result<()> {
     };
 
     println!("{}", serde_json::to_string_pretty(&report)?);
+
+    if every_commit_failed {
+        anyhow::bail!("every commit of the run failed to be rated");
+    }
     Ok(())
+}
+
+/// Wait for the decision server to answer.
+///
+/// The runtime of the model needs a few seconds to load its weights, and it
+/// may restart in the middle of a long run. The benchmark waits for it
+/// instead of failing at once — a run that starts too early would rate
+/// nothing.
+fn wait_for_the_server(client: &FoqClient, url: &str) -> anyhow::Result<()> {
+    let deadline = Instant::now() + std::time::Duration::from_secs(120);
+    while Instant::now() < deadline {
+        if client.is_ready() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    anyhow::bail!("the decision model is not answering on {url}")
 }
 
 /// List the object ids of the commits to rate, newest first.

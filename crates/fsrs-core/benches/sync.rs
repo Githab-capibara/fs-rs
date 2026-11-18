@@ -158,6 +158,48 @@ fn bench_pending(c: &mut Criterion) {
             criterion::black_box(commits.len());
         })
     });
+    group.bench_function("metadata only, no diff", |b| {
+        b.iter(|| {
+            let commits = git.pending_commit_metadata("main").unwrap();
+            criterion::black_box(commits.len());
+        })
+    });
+    group.finish();
+}
+
+/// The cost of the statistics of one commit.
+///
+/// The statistics are the expensive half of a commit: two trees are compared
+/// for every commit. The measurement separates them from the cheap half, the
+/// metadata, so the price of the two halves is known.
+fn bench_commit_stats(c: &mut Criterion) {
+    let temp = tempfile::tempdir().unwrap();
+    let upstream = make_upstream(temp.path());
+    let fork = make_fork(temp.path(), &upstream);
+    let git = GitRepo::open(&fork).unwrap();
+    prepare(&git, &upstream);
+
+    let pending = git.pending_commits("main").unwrap();
+    assert_eq!(pending.len(), BEHIND);
+    // The commit whose statistics are measured again and again: the first of
+    // the pending ones.
+    let sha = pending[0].sha.clone();
+    let commit = git.resolve_commit(&sha).unwrap();
+
+    let mut group = c.benchmark_group("commit_stats");
+    group.sample_size(10);
+    group.bench_function("statistics of one commit", |b| {
+        b.iter(|| {
+            let stats = git.commit_stats(&commit).unwrap();
+            criterion::black_box(stats.insertions);
+        })
+    });
+    group.bench_function("metadata of one commit", |b| {
+        b.iter(|| {
+            let meta = git.commit_meta(&commit, None).unwrap();
+            criterion::black_box(meta.sha.len());
+        })
+    });
     group.finish();
 }
 
@@ -346,5 +388,11 @@ fn bench_sync_end_to_end(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_pending, bench_replace, bench_sync_end_to_end);
+criterion_group!(
+    benches,
+    bench_pending,
+    bench_commit_stats,
+    bench_replace,
+    bench_sync_end_to_end
+);
 criterion_main!(benches);

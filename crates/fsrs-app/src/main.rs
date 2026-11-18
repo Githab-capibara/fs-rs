@@ -123,6 +123,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // The git objects of the forks are read over and over: the listing of the
+    // missing commits, the diff of every commit, the patch of the commit that
+    // is being rated. Two options of git2 cost more than they save on this
+    // pattern; the measurement is in the documentation of the call.
+    fsrs_core::git::configure_performance();
+
     let config_path = options.config.unwrap_or_else(config::default_path);
     let data_dir = options.data.unwrap_or_else(config::default_data_dir);
 

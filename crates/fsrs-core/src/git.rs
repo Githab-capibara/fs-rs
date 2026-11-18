@@ -13,6 +13,47 @@ use git2::{Commit, DiffOptions, FetchOptions, Repository};
 /// Name of the remote that points at the original upstream project.
 pub const UPSTREAM_REMOTE: &str = "upstream";
 
+/// Turn the git2 options that cost time off.
+///
+/// The dashboard reads the objects of a fork over and over: once for the
+/// listing of the missing commits, once for the diff of every commit, and
+/// once more for the patch of the commit that is being rated. Two options of
+/// git2 stand in the way of that:
+///
+/// * `enable_caching` keeps the parsed objects of the repository in a cache.
+///   The cache is bigger than the work it saves here — the objects of a
+///   commit are read once and thrown away — so it costs memory and time.
+/// * `strict_hash_verification` checks the hash of every object that is read.
+///   The check is what git itself does when it verifies a repository, but a
+///   working copy that was fetched over https is already verified by the
+///   transport and by the pack index.
+///
+/// The two options are only fast together. Measured on the fork of `fd` with
+/// 1450 pending commits (see `examples/revwalk-probe.rs`):
+///
+/// | options | time of the listing |
+/// |---------|---------------------|
+/// | both on (default) | 2500 ms |
+/// | verification off | 2320 ms |
+/// | caching off | 2450 ms |
+/// | both off | 1270 ms |
+///
+/// The walk of the graph is not the expensive part — it takes 30 ms of the
+/// 2270 ms — the diff of every commit is. Turning the options off halves the
+/// time of a listing.
+///
+/// The price is the level of the integrity: an object whose content does not
+/// match its name is not detected while it is read. A repository that was
+/// fetched over https is verified by the transport, and `git fsck` still
+/// checks it when the user asks for it.
+///
+/// The options are global to the process, so this is called once, at the
+/// start of the program.
+pub fn configure_performance() {
+    git2::opts::enable_caching(false);
+    git2::opts::strict_hash_verification(false);
+}
+
 /// A commit of the upstream project that is not yet present in the fork.
 #[derive(Debug, Clone)]
 pub struct PendingCommit {
@@ -40,6 +81,29 @@ pub struct PendingCommit {
     pub deletions: u32,
 }
 
+impl PendingCommit {
+    /// Join the metadata and the statistics of a commit.
+    ///
+    /// The two halves are computed apart: the metadata is cheap and always
+    /// needed, the statistics are expensive and are reused when they are
+    /// already known.
+    pub fn from_parts(meta: CommitMeta, stats: CommitStats) -> Self {
+        Self {
+            sha: meta.sha,
+            short_sha: meta.short_sha,
+            summary: meta.summary,
+            body: meta.body,
+            author: meta.author,
+            author_email: meta.author_email,
+            authored_at: meta.authored_at,
+            committed_at: meta.committed_at,
+            files: stats.files,
+            insertions: stats.insertions,
+            deletions: stats.deletions,
+        }
+    }
+}
+
 /// Diff statistics of a single commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommitStats {
@@ -49,6 +113,32 @@ pub struct CommitStats {
     pub insertions: u32,
     /// Deleted lines.
     pub deletions: u32,
+}
+
+/// The cheap part of a commit.
+///
+/// Everything here reads the commit object itself: no tree is compared, no
+/// diff is computed and no file is counted. The statistics of a commit come
+/// from [`CommitStats`] instead, and they cost a tree-to-tree diff — an
+/// order of magnitude more than this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitMeta {
+    /// Full object id.
+    pub sha: String,
+    /// Short object id.
+    pub short_sha: String,
+    /// First line of the message.
+    pub summary: String,
+    /// Remaining message body.
+    pub body: String,
+    /// Author name.
+    pub author: String,
+    /// Author email.
+    pub author_email: String,
+    /// Author timestamp, unix seconds.
+    pub authored_at: i64,
+    /// Committer timestamp, unix seconds.
+    pub committed_at: i64,
 }
 
 /// A tracked repository opened from disk.
@@ -164,6 +254,32 @@ impl GitRepo {
         Ok(pending)
     }
 
+    /// The metadata of the commits that are missing from the fork's `branch`,
+    /// without a single diff.
+    ///
+    /// The metadata of a commit is read from the commit object itself, so
+    /// this listing costs one object read per commit. The statistics are not
+    /// computed at all: they are expensive, and the interface asks for them
+    /// only when it needs them — the cache of the store and
+    /// [`Self::pending_commits_incremental`] hold them.
+    ///
+    /// Result is ordered newest first.
+    pub fn pending_commit_metadata(&self, branch: &str) -> Result<Vec<CommitMeta>> {
+        let local = self.branch_commit(branch)?;
+        let upstream = self.upstream_commit(branch)?;
+        let mut walk = self.repo.revwalk()?;
+        walk.set_sorting(git2::Sort::TIME)?;
+        walk.push(upstream.id())?;
+        walk.hide(local.id())?;
+        let mut pending = Vec::new();
+        for oid in walk {
+            let oid = oid?;
+            let commit = self.repo.find_commit(oid)?;
+            pending.push(self.commit_meta(&commit, None)?);
+        }
+        Ok(pending)
+    }
+
     /// Commits reachable from upstream but absent from the fork's `branch`,
     /// reusing the statistics already known for some of them.
     ///
@@ -203,8 +319,9 @@ impl GitRepo {
 
     /// Build a [`PendingCommit`] description from a git commit.
     pub fn describe_commit(&self, commit: &Commit<'_>) -> Result<PendingCommit> {
+        let meta = self.commit_meta(commit, None)?;
         let stats = self.commit_stats(commit)?;
-        self.describe_commit_with_stats(commit, stats, None)
+        Ok(PendingCommit::from_parts(meta, stats))
     }
 
     /// Build a [`PendingCommit`] from git metadata and statistics computed
@@ -218,12 +335,22 @@ impl GitRepo {
         stats: CommitStats,
         message: Option<&str>,
     ) -> Result<PendingCommit> {
+        let meta = self.commit_meta(commit, message)?;
+        Ok(PendingCommit::from_parts(meta, stats))
+    }
+
+    /// Read the cheap metadata of a commit.
+    ///
+    /// No tree is compared and no diff is computed: the cost of this call is
+    /// the reading of one commit object. The statistics of the same commit
+    /// come from [`Self::commit_stats`], which walks two trees.
+    pub fn commit_meta(&self, commit: &Commit<'_>, message: Option<&str>) -> Result<CommitMeta> {
         let message = message.unwrap_or_else(|| commit.message().unwrap_or_default());
         let (summary, body) = split_message(message);
         let author = commit.author();
         // One allocation, `oid.to_string` first built the whole 40 characters.
         let short_sha = format!("{:.8}", commit.id());
-        Ok(PendingCommit {
+        Ok(CommitMeta {
             sha: commit.id().to_string(),
             short_sha,
             summary,
@@ -232,9 +359,6 @@ impl GitRepo {
             author_email: author.email().unwrap_or("").to_string(),
             authored_at: author.when().seconds(),
             committed_at: commit.committer().when().seconds(),
-            files: stats.files,
-            insertions: stats.insertions,
-            deletions: stats.deletions,
         })
     }
 

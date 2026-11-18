@@ -39,9 +39,10 @@ records of the hot paths do not cost anything.
 
 ## Consequences
 
-- **Easier:** the program starts in 4.1 ms instead of 5.0 ms, and the binary
-  is 23.6 MiB instead of 26.5 MiB — the profile-guided build is 11% smaller
-  and 9% less code.
+- **Easier:** the program starts in 3.3 ms instead of 3.4 ms, and the binary
+  is 14.7 MiB instead of 14.9 MiB — the profile-guided build is a little
+  smaller and a little less code. The numbers are the medians of forty
+  interleaved runs of `scripts/measure-startup.py`.
 - **Harder:** the binary of a build with `target-cpu=native` runs only on a
   processor with the same instructions. A build for a distribution has to
   override the flag.
@@ -57,6 +58,8 @@ records of the hot paths do not cost anything.
 - **Option A:** keep the portable build and ship two binaries. Rejected
   because the dashboard is not distributed — it is built and run on the same
   machine.
-- **Option B:** use `llvm-bolt` for the layout of the hot paths. Rejected
-  because the tool is not in the toolchain of rust, and the profile-guided
-  build already gives most of the win.
+- **Option B:** use `llvm-bolt` for the layout of the hot paths. Tried later
+  and measured — see [ADR-15](ADR-15-lay-the-code-out-again-with-bolt.md).
+  The tool works, and the measurement says that the time of the program is
+  not in the code it moves, so the build with a profile of the compiler stays
+  the way the program is built.

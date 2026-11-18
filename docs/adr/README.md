@@ -15,6 +15,10 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-09](ADR-09-commits-are-counted-once.md) | Count every commit once | Accepted |
 | [ADR-10](ADR-10-the-decision-server-is-asked-four-times.md) | Ask the decision server four times, not thirty | Accepted |
 | [ADR-11](ADR-11-build-for-the-machine.md) | Build the dashboard for the machine it runs on | Accepted |
+| [ADR-12](ADR-12-read-the-objects-as-fast-as-git-can.md) | Read the objects of a fork as fast as git can read them | Accepted |
+| [ADR-13](ADR-13-rate-the-commits-one-at-a-time.md) | Rate the commits one at a time | Accepted |
+| [ADR-14](ADR-14-keep-egui-036-while-the-terminal-widget-needs-it.md) | Keep egui 0.36 while the terminal widget needs it | Accepted |
+| [ADR-15](ADR-15-lay-the-code-out-again-with-bolt.md) | Lay the code out again with BOLT | Accepted |
 
 ## How to read an ADR
 

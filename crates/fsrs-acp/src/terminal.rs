@@ -285,19 +285,24 @@ impl TerminalRegistry {
     ///
     /// The thread that waits for the process wakes the readers, so this
     /// blocks without waking up every fifty milliseconds.
+    ///
+    /// The status is not taken out of the slot of the terminal: the output of
+    /// the command is read after the wait, and the reader of the master side
+    /// has to know that the command is gone before it waits for the last
+    /// bytes of the output.
     pub fn wait_for_exit(&self, id: &str) -> Result<ExitStatus, TerminalError> {
         let terminals = self.terminals.lock().map_err(|_| TerminalError::Poisoned)?;
         let terminal = terminals
             .get(id)
             .ok_or_else(|| TerminalError::Unknown(id.to_string()))?;
         let exit = terminal.exit.lock().map_err(|_| TerminalError::Poisoned)?;
-        let (mut slot, _) = terminal
+        let (slot, _) = terminal
             .exited
             .wait_timeout_while(exit, std::time::Duration::from_millis(250), |slot| {
                 slot.is_none()
             })
             .map_err(|_| TerminalError::Poisoned)?;
-        match slot.take() {
+        match slot.clone() {
             Some(status) => Ok(status),
             None => Err(TerminalError::Unknown(id.to_string())),
         }
@@ -510,6 +515,40 @@ mod tests {
         assert_eq!(first.output, second.output);
         assert!(first.output.contains("hello-from-fsrs"));
         assert_eq!(first.truncated, second.truncated);
+    }
+
+    #[test]
+    fn the_exit_is_still_known_after_the_wait_for_it() {
+        // The status of the exit is not taken out of the slot of the
+        // terminal: the output of the command is read after the wait, and the
+        // reader of the master side has to know that the command is gone
+        // before it waits for the last bytes of the output.
+        let registry = TerminalRegistry::new(std::env::temp_dir());
+        let id = registry
+            .create(
+                "sh",
+                &["-c".to_string(), "echo hello-from-fsrs".to_string()],
+                &[],
+                None,
+                None,
+            )
+            .expect("the terminal should start");
+        let status = registry
+            .wait_for_exit(&id)
+            .expect("the terminal should exist");
+        assert_eq!(status.exit_code, Some(0));
+
+        let output = registry.output(&id).expect("the terminal should exist");
+        assert!(
+            output.output.contains("hello-from-fsrs"),
+            "the output holds: {}",
+            output.output
+        );
+        assert_eq!(
+            output.exit_status.and_then(|status| status.exit_code),
+            Some(0),
+            "the exit is still known after the wait for it"
+        );
     }
 
     #[test]

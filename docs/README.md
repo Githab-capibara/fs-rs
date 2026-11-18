@@ -34,6 +34,10 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-09](adr/ADR-09-commits-are-counted-once.md) | Count every commit once |
 | [ADR-10](adr/ADR-10-the-decision-server-is-asked-four-times.md) | Ask the decision server four times, not thirty |
 | [ADR-11](adr/ADR-11-build-for-the-machine.md) | Build the dashboard for the machine it runs on |
+| [ADR-12](adr/ADR-12-read-the-objects-as-fast-as-git-can.md) | Read the objects of a fork as fast as git can read them |
+| [ADR-13](adr/ADR-13-rate-the-commits-one-at-a-time.md) | Rate the commits one at a time |
+| [ADR-14](adr/ADR-14-keep-egui-036-while-the-terminal-widget-needs-it.md) | Keep egui 0.36 while the terminal widget needs it |
+| [ADR-15](adr/ADR-15-lay-the-code-out-again-with-bolt.md) | Lay the code out again with BOLT |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |

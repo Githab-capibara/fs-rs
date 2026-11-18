@@ -93,6 +93,29 @@ approval and the merge. The events are sent through an unbounded channel to
 the dashboard, which renders them in the log panel, and they are persisted, so
 a run can be replayed after the window was closed.
 
+## The terminals of the agents
+
+An agent that runs shell commands through the client protocol expects a real
+pseudo terminal: the command has to keep running between the requests, its
+output has to be replayable, and its exit has to be observable. The
+`terminal/*` requests are therefore served by a real `portable-pty` terminal.
+
+Two threads watch every terminal:
+
+* the reader of the master side copies the bytes of the command into a
+  buffer, and it is the only writer of the buffer,
+* the waiter of the process fills the slot of the exit status and wakes
+  everybody who waits for it — nobody polls the process any more.
+
+The two threads race: the process can die before the last bytes of its
+output reach the buffer. The output of a terminal that has already finished
+therefore waits for the reader to drain the master side, and the exit status
+stays in its slot — it is not taken out by the wait for it, because the
+reader of the master side has to know that the command is gone before it
+waits for the last bytes. A command that wrote its last line and exited
+therefore always reports its output, and the exit status is still known in
+the answer of `terminal/output` that follows the wait.
+
 ## The limits
 
 * `DEFAULT_MAX_CYCLES = 5`. A sixth rejection ends the run with

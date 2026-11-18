@@ -17,6 +17,10 @@ lives here — the crate is the vocabulary every other crate speaks.
 | [`tests/git_integration.rs`](tests/git_integration.rs) | The git layer against real temporary repositories: fetching, listing, branching, merging, the CRLF separators of commit messages |
 | [`tests/catalog_integration.rs`](tests/catalog_integration.rs) | The catalogue against real repositories, including a fork that carries patches upstream does not have |
 
+| Tool | What it does |
+|------|--------------|
+| [`examples/revwalk-probe.rs`](examples/revwalk-probe.rs) | Measures the listing of the missing commits of a real fork: the graph walk, the diff, and the two options of git2 that the dashboard turns off |
+
 ## Example
 
 ```rust

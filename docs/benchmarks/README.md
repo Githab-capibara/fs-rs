@@ -91,25 +91,36 @@ without a review.
 
 The size of the program is a measurement like any other: a dashboard that
 grows by a megabyte after every change is a dashboard nobody wants to
-start. The numbers come from `cargo-bloat`:
+start. Two tools measure it, and they measure different things:
 
 ```bash
+cargo build --release
+ls -l target/release/fsrs
+size target/release/fsrs
+
 cargo bloat --release --crates --bin fsrs -p fsrs-app
 ```
+
+The release profile strips the binary, so the file that the user runs is the
+small one. `cargo-bloat` builds the program again with the debug information,
+because it needs the symbols to say which crate a piece of code belongs to —
+its file size is therefore the size of the binary with the symbols in it.
 
 ## The size
 
 | Measurement | Value |
 |-------------|-------|
-| The file | 26.5 MiB |
-| The section of the code | 10.9 MiB |
+| The stripped file | 14.9 MiB (15 672 400 B) |
+| The section of the code of the stripped file | 14.6 MiB (15 259 252 B) |
+| The file with the symbols, as `cargo-bloat` builds it | 26.6 MiB |
+| The code that `cargo-bloat` attributes to the crates | 10.9 MiB |
 | The crates in it | 154 |
 
 The biggest parts of the code are the ones the dashboard cannot do without:
 the window (`egui`, `winit`, `epaint`), the protocol of the agents
 (`agent_client_protocol`), the fonts (`read_fonts`, `skrifa`) and the
 terminal (`libghostty_vt_sys`). The code of the dashboard itself is small:
-137.7 KiB, one and a half percent of the binary.
+141.5 KiB, one and a third percent of the code.
 
 ## The profile-guided optimisation
 
@@ -117,7 +128,7 @@ The build with a profile measures the program while it runs and lets the
 compiler lay the hot paths out first:
 
 ```bash
-FSRS_PGO_COMMAND='./target/pgo/train/release/fsrs --help' \
+FSRS_PGO_REPOSITORY=/path/to/repo FSRS_PGO_GIT_REPOSITORY=/path/to/fork \
     scripts/build-pgo.sh
 ```
 
@@ -128,15 +139,76 @@ the compiler — the format of the raw profiles changes between the versions:
 rustup component add llvm-tools-preview
 ```
 
-| Measurement | The ordinary build | The build with a profile |
-|--------------|--------------------|--------------------------|
-| The file | 26.5 MiB | 23.6 MiB (−11%) |
-| The section of the code | 10.9 MiB | 9.9 MiB (−9%) |
-| The start of the program | 5.0 ms | 4.1 ms (−18%) |
-
 The profile is gathered by running the program, so the numbers depend on the
 workload: the profile of a run that only reads the configuration is not the
-profile of a run that rates a commit.
+profile of a run that rates a commit. The default training of the script
+rates the commits of a real repository with the local model and lists the
+missing commits of a real fork — the two things the dashboard spends its
+time on.
+
+## The start of the program
+
+The startup is the time between the click on the icon and the first frame.
+The script that measures it runs the binaries one after another, so the
+machine is in the same state for every one of them, and reports the median:
+
+```bash
+python3 scripts/measure-startup.py target/release/fsrs target/pgo/release/fsrs
+```
+
+| Binary | The start of the program |
+|--------|--------------------------|
+| The ordinary build | 3364 µs |
+| The build with the profile | 3312 µs |
+
+The numbers are the medians of forty runs of each binary. The difference is
+inside the noise: the start of the program is the loading of the binary and
+the reading of the configuration, and neither of them is hot code.
+
+## The layout of the code again — BOLT
+
+The fortieth point of the checklist asks for the binary to be laid out again
+by BOLT — the tool that moves the hot functions next to each other and splits
+the cold code away from the hot one. The tool is not in the toolchain of
+rust, but it was tried: the one of the Arch archive (23.1.5) reads the binary
+of the compiler (LLVM 22.1.8) and writes a new one that runs.
+
+The profile of the run in the format of BOLT is recorded from the dashboard
+itself, against a real fork — the `fd` project, 1450 commits behind its
+upstream:
+
+```bash
+scripts/record-bolt-profile.sh target/pgo/release/fsrs
+FSRS_PGO_BOLT_DATA=target/pgo/bolt.fdata scripts/build-pgo.sh --bolt
+```
+
+The profile of that run holds 143600 samples and 4594907 branch entries, and
+it covers 556 of the 10768 functions of the binary. BOLT shortened 32552
+instructions, removed 776 empty blocks, folded 9 functions into the ones they
+do the same thing as, and moved the hot blocks of 481 functions to the front
+of their function.
+
+The result, measured the same way as the other two:
+
+| Binary | The start of the program | The listing of the commits |
+|--------|--------------------------|---------------------------|
+| The ordinary build | 3364 µs | 1245 ms |
+| The build with the profile | 3312 µs | 1254 ms |
+| The build with the profile and BOLT | 3362 µs | 1223 ms |
+
+The differences are inside the noise of the machine. The reason is in the
+profile: the dashboard spends its time in the code of `libgit2` — the
+comparison of the trees of every commit — and in the model that answers the
+questions, and neither of them is the code that BOLT moves around.
+
+The listing of the commits is measured by the script that opens the
+dashboard against a real fork and reads the time out of its log:
+
+```bash
+scripts/measure-sync.sh target/release/fsrs /tmp/opencode/fd-fork master 5
+```
+
+See [ADR-15](../adr/ADR-15-lay-the-code-out-again-with-bolt.md).
 
 ## What the run proves
 
@@ -182,19 +254,29 @@ small file, so every diff is real.
 
 | Operation | Path | Time |
 |-----------|------|------|
-| Listing 200 pending commits | the previous path: a diff per commit | 33.99 ms |
-| Listing 200 pending commits | statistics known, no diff computed | 2.99 ms |
-| Listing 200 pending commits | the first listing, nothing known | 34.89 ms |
-| Storing 500 rows | the previous path: delete all, insert all | 1.14 ms |
-| Storing 500 rows | upsert, every row changed | 0.428 ms |
-| Storing 500 rows | upsert, the list did not move | 0.173 ms |
-| Synchronisation end to end | cold, statistics unknown | 41.28 ms |
-| Synchronisation end to end | warm, statistics known | 4.96 ms |
+| Listing 200 pending commits | the previous path: a diff per commit | 32.33 ms |
+| Listing 200 pending commits | statistics known, no diff computed | 2.73 ms |
+| Listing 200 pending commits | the first listing, nothing known | 32.33 ms |
+| Listing 200 pending commits | metadata only, no diff at all | 2.69 ms |
+| Statistics of one commit | two trees compared | 148.22 µs |
+| Metadata of one commit | the commit object read | 293.32 ns |
+| Storing 500 rows | the previous path: delete all, insert all | 1.05 ms |
+| Storing 500 rows | upsert, every row changed | 398.06 µs |
+| Storing 500 rows | upsert, the list did not move | 164.67 µs |
+| Synchronisation end to end | cold, statistics unknown | 37.65 ms |
+| Synchronisation end to end | warm, statistics known | 4.43 ms |
 
-The warm synchronisation is **8.3x faster** than the cold one and **6.8x
+The warm synchronisation is **8.5x faster** than the cold one and **7.3x
 faster** than the previous path, because the only thing that is computed is
 what changed. The list is stored only when it actually differs from what is
 already on disk.
+
+The statistics of one commit are **505x** more expensive than its metadata:
+148 µs against 293 ns. The diff of the commit is the price of the listing,
+and the metadata — the author, the message, the time — is free. The split of
+the two halves is what makes the two numbers above possible: the listing with
+the metadata only and no diff at all is as fast as the listing with the
+statistics that are already known.
 
 ## Why a commit is not measured twice
 
@@ -203,6 +285,66 @@ synchronisations of a fork that did not move, nothing about its pending commits
 changes — a commit is immutable — so the diff statistics of the first listing
 are kept in the repository itself, and reused on every later one. See
 [ADR-09](../adr/ADR-09-commits-are-counted-once.md).
+
+## The options of git2
+
+The listing of the missing commits of a fork is the work the user waits for
+when the dashboard opens. Two options of git2 stand in the way of it: the
+cache of the parsed objects, which is useless when every object is read once,
+and the verification of the hash of every object, which belongs to a check of
+the repository and not to a working copy that was fetched over https.
+
+The measurement was made on a real fork — the `fd` project, 1450 commits
+behind its upstream — with the probe of the repository:
+
+```bash
+cargo run -p fsrs-core --example revwalk-probe -- <fork> <branch>
+```
+
+| Options | The whole listing | Of which the diff |
+|---------|-------------------|------------------|
+| Both on (the default) | 2500 ms | 2467 ms |
+| The verification off | 2320 ms | 2261 ms |
+| The cache off | 2450 ms | 2368 ms |
+| Both off | **1270 ms** | 1226 ms |
+
+The numbers are the medians of five runs. The walk of the graph of the commits
+is not the expensive part — it takes 30 ms of the 2500 ms. The comparison of
+the trees of every commit takes the other 2467 ms, and the two options halve
+the time of the listing because they make the diff cheaper.
+
+See [ADR-12](../adr/ADR-12-read-the-objects-as-fast-as-git-can.md).
+
+# Benchmark of the slots of the decision server
+
+The ratings of the backlog could be evaluated in parallel, but the server of
+the model serves one request at a time per slot. The server of this machine
+reports one slot:
+
+```json
+{"total_slots": 1, "default_generation_settings": {"n_ctx": 4096}}
+```
+
+The probe of the client measures the two ways of asking the same questions:
+
+```bash
+cargo run -p fsrs-ai --example slot-probe -- http://127.0.0.1:8089
+```
+
+| Requests | One after another | In parallel |
+|----------|-------------------|-------------|
+| 1 | 75 ms | 78 ms |
+| 2 | 155 ms | 190 ms |
+| 4 | 342 ms | 394 ms |
+| 8 | 743 ms | 797 ms |
+
+The parallel run is slower at every size: the requests wait in the queue of
+the server, and the threads only add the cost of the context switch. The
+numbers are the medians of five runs.
+
+The dashboard therefore asks the server how many slots it has and never keeps
+more ratings in flight than the server can serve. See
+[ADR-13](../adr/ADR-13-rate-the-commits-one-at-a-time.md).
 
 # Benchmark of the calls to the decision server
 

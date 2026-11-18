@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use fsrs_acp::{
@@ -49,6 +49,12 @@ pub enum WorkerMessage {
         sha: String,
         /// The reason of the failure.
         error: String,
+    },
+    /// The server of the local decision model reported how many requests it
+    /// serves at the same time.
+    SlotsKnown {
+        /// The number of the slots of the server.
+        slots: usize,
     },
     /// The agent published its list of models.
     ModelsLoaded {
@@ -119,17 +125,18 @@ pub struct Worker {
     runtime: tokio::runtime::Runtime,
     sender: Sender<WorkerMessage>,
     receiver: Receiver<WorkerMessage>,
-    /// The client of the local decision model.
+    /// The client of the local decision model and the settings it was built
+    /// from.
     ///
     /// The client is shared by every assessment: it keeps the connection to
     /// the server open, it remembers the size of the context window and it
     /// remembers the prompts it already fitted. A client per commit threw
     /// all of that away and asked the server for its properties again.
-    client: Arc<FoqClient>,
-    /// The settings the client was built from.
     ///
-    /// A change of the settings builds a new client.
-    settings: FoqSettings,
+    /// The settings of the user can change in the middle of the life of the
+    /// dashboard, so the pair is behind a lock: the client is replaced only
+    /// when the settings really changed.
+    client: RwLock<(FoqSettings, Arc<FoqClient>)>,
 }
 
 impl Worker {
@@ -148,18 +155,22 @@ impl Worker {
             runtime,
             sender,
             receiver,
-            client,
-            settings,
+            client: RwLock::new((settings, client)),
         })
     }
 
     /// The client of the local decision model, rebuilt when the settings
     /// change.
     fn client(&self, settings: &FoqSettings) -> Arc<FoqClient> {
-        if &self.settings == settings {
-            return Arc::clone(&self.client);
+        let mut slot = self
+            .client
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        if &slot.0 != settings {
+            slot.0 = settings.clone();
+            slot.1 = Arc::new(settings.client());
         }
-        Arc::new(settings.client())
+        Arc::clone(&slot.1)
     }
 
     /// Take every message that arrived since the last call.
@@ -240,6 +251,23 @@ impl Worker {
         });
     }
 
+    /// Ask the server of the local decision model how many requests it serves
+    /// at the same time.
+    ///
+    /// The answer bounds the number of the ratings that are in flight: a
+    /// request that waits in the queue of the server waits for the model
+    /// anyway, so asking more of the server at once only makes the run
+    /// slower.
+    pub fn probe_slots(&self, settings: FoqSettings) {
+        let sender = self.sender.clone();
+        let client = self.client(&settings);
+        self.runtime.spawn_blocking(move || {
+            let slots = client.slots();
+            tracing::info!(slots, "the decision server reported its slots");
+            let _ = sender.send(WorkerMessage::SlotsKnown { slots });
+        });
+    }
+
     /// Ask the agent which models it offers.
     pub fn discover_models(&self, command: String, root: PathBuf) {
         let sender = self.sender.clone();
@@ -266,6 +294,7 @@ impl Worker {
     pub fn run_pipeline(&self, request: PipelineRequest) {
         let sender = self.sender.clone();
         self.runtime.spawn(async move {
+            let started = Instant::now();
             let repo_path = request.repo_path.clone();
             let sha = request.commit.sha.clone();
             let patch =
@@ -278,6 +307,11 @@ impl Worker {
             let forwarder = Self::forward_events(&sender, receiver);
             let outcome = fsrs_acp::run_pipeline(request, events).await;
             let _ = forwarder.await;
+            let elapsed_ms = started.elapsed().as_millis();
+            match &outcome {
+                Ok(_) => tracing::info!(elapsed_ms, "the pipeline finished"),
+                Err(error) => tracing::warn!(elapsed_ms, %error, "the pipeline failed"),
+            }
             let _ = sender.send(WorkerMessage::PipelineFinished {
                 outcome: outcome.map_err(|error| error.to_string()),
             });
@@ -318,6 +352,48 @@ mod tests {
     fn the_worker_starts_and_drains_empty() {
         let worker = Worker::new().expect("the runtime should start");
         assert!(worker.drain().is_empty());
+    }
+
+    #[test]
+    fn the_client_is_kept_while_the_settings_do_not_change() {
+        let worker = Worker::new().expect("the runtime should start");
+        let settings = FoqSettings::default();
+        let first = worker.client(&settings);
+        let second = worker.client(&settings);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "the client of the decision server has to be shared"
+        );
+
+        let other = FoqSettings {
+            url: "http://127.0.0.1:8090".to_string(),
+            ..settings
+        };
+        let third = worker.client(&other);
+        assert!(
+            !Arc::ptr_eq(&first, &third),
+            "a change of the settings has to build a new client"
+        );
+    }
+
+    #[test]
+    fn the_worker_reports_the_slots_of_the_decision_server() {
+        let worker = Worker::new().expect("the runtime should start");
+        worker.probe_slots(FoqSettings::default());
+        let mut messages = Vec::new();
+        for _ in 0..100 {
+            messages.extend(worker.drain());
+            if !messages.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // A server that does not answer is assumed to have one slot, so the
+        // number is always known.
+        assert!(matches!(
+            messages.first(),
+            Some(WorkerMessage::SlotsKnown { slots }) if *slots >= 1
+        ));
     }
 
     #[test]
