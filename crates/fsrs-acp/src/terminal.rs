@@ -61,6 +61,14 @@ struct Terminal {
     /// The thread that waits for the command fills the slot of the exit and
     /// wakes the readers; nobody polls the process any more.
     exited: Arc<Condvar>,
+    /// Woken when the reader has drained the master side.
+    ///
+    /// The process can die before the last bytes of its output reach the
+    /// buffer, so a reader that wants the whole output waits for this
+    /// signal as well.
+    drained: Arc<Condvar>,
+    /// Whether the reader has drained the master side.
+    drain_finished: Arc<Mutex<bool>>,
     limit: usize,
 }
 
@@ -130,6 +138,10 @@ impl TerminalRegistry {
 
         let output = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&output);
+        let drain_finished = Arc::new(Mutex::new(false));
+        let reader_finished = Arc::clone(&drain_finished);
+        let drained = Arc::new(Condvar::new());
+        let reader_drained = Arc::clone(&drained);
         std::thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
             loop {
@@ -142,6 +154,12 @@ impl TerminalRegistry {
                     }
                 }
             }
+            // The master side is empty: every byte the command wrote is in
+            // the buffer now.
+            if let Ok(mut finished) = reader_finished.lock() {
+                *finished = true;
+            }
+            reader_drained.notify_all();
         });
 
         let id = format!("term-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -186,6 +204,8 @@ impl TerminalRegistry {
             cached: Arc::new(Mutex::new(CachedOutput::default())),
             exit,
             exited,
+            drained,
+            drain_finished,
             limit: output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
         };
         let mut terminals = self.terminals.lock().map_err(|_| TerminalError::Poisoned)?;
@@ -197,11 +217,33 @@ impl TerminalRegistry {
     ///
     /// Returns the output, whether it had to be truncated, and the exit status
     /// when the command already finished.
+    ///
+    /// When the command has already finished, the reader of the master side
+    /// is waited for: the process can die before the last bytes of its
+    /// output reach the buffer, and the answer would miss them.
     pub fn output(&self, id: &str) -> Result<TerminalOutput, TerminalError> {
         let mut terminals = self.terminals.lock().map_err(|_| TerminalError::Poisoned)?;
         let terminal = terminals
             .get_mut(id)
             .ok_or_else(|| TerminalError::Unknown(id.to_string()))?;
+        // The command is gone: wait for the reader to drain the master side,
+        // so the answer holds the whole output.
+        if terminal.exit_status().is_some() {
+            let finished = terminal
+                .drain_finished
+                .lock()
+                .map_err(|_| TerminalError::Poisoned)?;
+            // The wait is generous on purpose: the command has already
+            // exited, so draining the master side is a matter of
+            // microseconds, but a machine running the whole test suite in
+            // parallel can take much longer to schedule the reader.
+            let _ = terminal
+                .drained
+                .wait_timeout_while(finished, std::time::Duration::from_secs(2), |finished| {
+                    !*finished
+                })
+                .map_err(|_| TerminalError::Poisoned)?;
+        }
         let limit = terminal.limit;
         let truncated;
         let output;

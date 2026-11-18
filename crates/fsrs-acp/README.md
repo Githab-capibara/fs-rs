@@ -11,7 +11,7 @@ continues in the same session and the pipeline survives a change of the agent.
 | [`prompts`](src/prompts.rs) | The three prompts, built by pure functions so that they can be asserted and shown before they are sent |
 | [`models`](src/models.rs) | The list of the models that the agent offers, and the filter that keeps the retired `local/oxcoder-9b` out of it |
 | [`events`](src/events.rs) | `AgentRole` and `RunEvent`: every observable step of a run |
-| [`terminal`](src/terminal.rs) | The pseudo terminals that answer the `terminal/*` requests of the protocol |
+| [`terminal`](src/terminal.rs) | The pseudo terminals that answer the `terminal/*` requests of the protocol: the process is watched by a thread of its own, and the output is kept as a string so an answer copies only the new bytes |
 | [`mock`](src/mock.rs) | The mock agent: the test double that plays the three roles |
 
 | Binary | What it is |

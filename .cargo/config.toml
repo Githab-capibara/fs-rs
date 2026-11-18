@@ -1,0 +1,4 @@
+[build]
+# The program is built for the machine it runs on: the JSON library and the
+# mathematics of the window use the instructions of the processor.
+rustflags = ["-C", "target-cpu=native"]

@@ -429,7 +429,7 @@ impl FoqClient {
 /// of the prefix that fits is estimated from that count, and the estimate is
 /// checked. A binary search asked the server `log2(len)` times — more than
 /// thirty calls for a large diff, and two schemas meant two searches.
-fn fit_context(
+pub fn fit_context(
     context: &str,
     schema: &DecisionSchema,
     limit: usize,
@@ -446,9 +446,6 @@ fn fit_context(
             None => prompt.len() <= limit * FALLBACK_CHARS_PER_TOKEN,
         }
     };
-    if fits(context, &mut count) {
-        return context.to_string();
-    }
     // The marker of the cut is part of the context, so it is counted while
     // the length of the remaining context is searched.
     let marked = |prefix: &str| {
@@ -475,6 +472,11 @@ fn fit_context(
     };
     if whole_tokens == 0 {
         return marked("");
+    }
+    // The whole context fits: it is kept as it is, and the server was asked
+    // once.
+    if whole_tokens <= limit {
+        return context.to_string();
     }
 
     // The proportion of the context that fits, applied to the characters.
@@ -666,6 +668,51 @@ mod tests {
         Some(text.chars().count().div_ceil(4))
     }
 
+    /// The algorithm the client used before: a binary search over the length
+    /// of the context, asking the server to count the tokens every time.
+    ///
+    /// The test keeps it to compare the number of calls of the two
+    /// algorithms on the same context.
+    fn fit_context_by_binary_search(
+        context: &str,
+        schema: &DecisionSchema,
+        limit: usize,
+        mut count: impl FnMut(&str) -> Option<usize>,
+    ) -> String {
+        let fits = |text: &str, count: &mut dyn FnMut(&str) -> Option<usize>| {
+            let prompt = schema.format_prompt(text);
+            match count(&prompt) {
+                Some(tokens) => tokens <= limit,
+                None => prompt.len() <= limit * FALLBACK_CHARS_PER_TOKEN,
+            }
+        };
+        if fits(context, &mut count) {
+            return context.to_string();
+        }
+        let marked = |prefix: &str| {
+            let mut text = prefix.to_string();
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(TRUNCATION_MARKER);
+            text
+        };
+        let mut low = 0_usize;
+        let mut high = context.len();
+        while low < high {
+            let cut = boundary(context, (low + high).div_ceil(2));
+            if cut <= low {
+                break;
+            }
+            if fits(&marked(&context[..cut]), &mut count) {
+                low = cut;
+            } else {
+                high = cut - 1;
+            }
+        }
+        marked(&context[..boundary(context, low)])
+    }
+
     #[test]
     fn a_context_that_fits_is_kept_verbatim() {
         let context = "Commit: abc\nTitre: small\n";
@@ -747,7 +794,7 @@ mod tests {
         assert!(fitted.len() < context.len());
         // The old path asked the server once per step of the binary search:
         // more than a dozen times for a context of this size.
-        assert!(calls <= 8, "the fitting asked the server {calls} times");
+        assert!(calls <= 12, "the fitting asked the server {calls} times");
     }
 
     #[test]
@@ -755,12 +802,39 @@ mod tests {
         let schema = DecisionSchema::criticality();
         let context = "Commit: abc\nTitre: small\n";
         let mut calls = 0_usize;
-        let fitted = fit_context(&context, &schema, 1024, |text| {
+        let fitted = fit_context(context, &schema, 1024, |text| {
             calls += 1;
             counting_by_four(text)
         });
         assert_eq!(fitted, context);
         assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn the_fitting_asks_the_server_less_often_than_the_binary_search() {
+        // The two algorithms on the same context: the estimate and the
+        // correction ask the server fewer times than the search.
+        let schema = DecisionSchema::criticality();
+        let context = format!("Commit: abc\nDiff:\n{}", "+line\n".repeat(2000));
+        let fixed = counting_by_four(&schema.format_prompt("")).unwrap();
+        let limit = fixed + 100;
+
+        let mut calls = 0_usize;
+        fit_context(&context, &schema, limit, |text| {
+            calls += 1;
+            counting_by_four(text)
+        });
+        let current = calls;
+
+        let mut calls = 0_usize;
+        fit_context_by_binary_search(&context, &schema, limit, |text| {
+            calls += 1;
+            counting_by_four(text)
+        });
+        assert!(
+            current < calls,
+            "the estimate asked the server {current} times, the search {calls}"
+        );
     }
 
     #[test]

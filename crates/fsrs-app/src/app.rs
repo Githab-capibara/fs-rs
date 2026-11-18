@@ -13,6 +13,8 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use fsrs_acp::{ModelChoice, PipelineRequest};
 use fsrs_core::{
@@ -26,6 +28,18 @@ use crate::state::{
 };
 use crate::terminal::TerminalPanel;
 use crate::worker::{FoqSettings, Worker, WorkerMessage};
+
+/// The moment the process was started.
+///
+/// The time from the start to the first frame is what the user waits for
+/// after the icon is clicked, so it is measured from the first line of the
+/// program and not from the creation of the window.
+static PROCESS_STARTED: OnceLock<Instant> = OnceLock::new();
+
+/// The moment the process was started.
+pub fn process_started() -> Instant {
+    *PROCESS_STARTED.get_or_init(Instant::now)
+}
 
 /// How many commits are rated by the local model at the same time.
 ///
@@ -124,6 +138,13 @@ pub struct FsrsApp {
     /// The prepared data is used for the screenshot of the documentation: it
     /// must survive the messages of the background worker.
     prepared: bool,
+    /// When the process was started.
+    ///
+    /// The time from the start to the first frame is what the user waits for
+    /// after the icon is clicked, so it is measured once.
+    started: Instant,
+    /// Whether the first frame was already drawn.
+    first_frame_drawn: bool,
 }
 
 impl FsrsApp {
@@ -176,6 +197,8 @@ impl FsrsApp {
             status: String::new(),
             error: None,
             prepared: false,
+            started: process_started(),
+            first_frame_drawn: false,
         };
         app.load_repositories();
         if discovery {
@@ -778,6 +801,13 @@ fn short_sha(sha: &str) -> String {
 
 impl eframe::App for FsrsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if !self.first_frame_drawn {
+            self.first_frame_drawn = true;
+            tracing::info!(
+                elapsed_ms = self.started.elapsed().as_millis(),
+                "the first frame of the window was drawn"
+            );
+        }
         let before = self.work_in_flight();
         self.handle_messages();
         self.dispatch_assessments();

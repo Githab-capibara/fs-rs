@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use fsrs_app::app::FsrsApp;
+use fsrs_app::app::{FsrsApp, process_started};
 use fsrs_app::worker::Worker;
 use fsrs_core::{Store, config};
 
@@ -103,12 +103,19 @@ fn write_default_config(path: &std::path::Path) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // The clock of the first frame starts here, before anything else: the
+    // user waits for the window from the click on the icon.
+    let started = process_started();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    tracing::debug!(
+        elapsed_ms = started.elapsed().as_millis(),
+        "the dashboard was started"
+    );
 
     let options = Options::parse(std::env::args().skip(1))?;
     if options.help {
@@ -141,7 +148,7 @@ fn main() -> Result<()> {
         native_options,
         Box::new(move |_creation| Ok(Box::new(FsrsApp::new(settings, config_path, store, worker)))),
     )
-    .context("the dashboard could not be started")?;
+    .map_err(|error| anyhow::anyhow!("the dashboard could not be started: {error}"))?;
 
     Ok(())
 }

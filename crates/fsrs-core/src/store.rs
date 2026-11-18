@@ -746,11 +746,15 @@ mod tests {
             deletions: 1,
             url: "https://example.com/commit/sha-1".into(),
         };
-        store.replace_commits(repo_id, &[commit.clone()]).unwrap();
+        store
+            .replace_commits(repo_id, std::slice::from_ref(&commit))
+            .unwrap();
 
         // A poll of a repository that did not move writes nothing: the row of
         // a pending commit is immutable, so it is already correct.
-        store.replace_commits(repo_id, &[commit.clone()]).unwrap();
+        store
+            .replace_commits(repo_id, std::slice::from_ref(&commit))
+            .unwrap();
         store.replace_commits(repo_id, &[commit]).unwrap();
         let stored = store.list_commits(repo_id).unwrap();
         assert_eq!(stored.len(), 1);

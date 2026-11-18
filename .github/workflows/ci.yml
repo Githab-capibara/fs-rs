@@ -90,3 +90,15 @@ jobs:
           # The repository carries `deny.toml`: an explicit allow list of
           # licences and a documented ignore list for the unmaintained
           # advisories of the accessibility stack.
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: rustsec/audit-check@v2.0.0
+        with:
+          # The lock file of the workspace is the audited set: a new
+          # advisory against a pinned version fails the build and has to be
+          # reviewed by hand.
+          token: ${{ secrets.GITHUB_TOKEN }}

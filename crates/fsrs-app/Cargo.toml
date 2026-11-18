@@ -31,10 +31,13 @@ serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wayland", "x11", "wgpu"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wayland", "x11", "glow"] }
 egui = "0.36"
 egui_tty = "0.2"
 portable-pty = "0.9"
+# The allocator of the program: the window allocates and frees a lot of
+# small blocks, and this one is faster than the one of the system.
+mimalloc = "0.1"
 
 [dev-dependencies]
 egui_kittest = { version = "0.36.2", features = ["eframe", "snapshot", "wgpu"] }

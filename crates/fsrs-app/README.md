@@ -11,7 +11,7 @@ rendered by the Ghostty VT engine.
 | [`state`](src/state.rs) | The view types: `RepoView`, `ModelPicker`, `PipelineLog`, the badges, the colours and the Russian plural forms |
 | [`worker`](src/worker.rs) | The background executor: the synchronisation, the ratings, the discovery of the models and the pipeline, all off the UI thread |
 | [`terminal`](src/terminal.rs) | The terminal panel: the pseudo terminal, the reader thread and the termination of the child process |
-| [`main`](src/main.rs) | The entry point: the arguments, the configuration, the database and the window |
+| [`main`](src/main.rs) | The entry point: the arguments, the configuration, the database and the window. The allocator of the program is `mimalloc`, and the time to the first frame is logged |
 
 | Binary | What it is |
 |--------|------------|
@@ -43,5 +43,7 @@ neither a lock nor a pool.
 |----------|---------|
 | [ADR-01](../../docs/adr/ADR-01-horizontal-repository-strip.md) | Why the repositories are a horizontal strip |
 | [ADR-02](../../docs/adr/ADR-02-opencode-mini-for-the-manual-terminal.md) | Why the manual terminal runs `opencode mini` |
+| [ADR-10](../../docs/adr/ADR-10-the-decision-server-is-asked-four-times.md) | Why the dashboard asks the decision server four times per commit |
+| [ADR-11](../../docs/adr/ADR-11-build-for-the-machine.md) | Why the build is tuned for the machine it runs on |
 | [Design note — the dashboard layout](../../docs/design/01-dashboard-layout.md) | The window, the threads, the picker, the screenshot |
 | [Getting started](../../docs/guides/01-getting-started.md) | The first run of the dashboard |

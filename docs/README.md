@@ -32,6 +32,8 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-05](adr/ADR-05-foq-as-the-only-local-model.md) | Use Foq as the only local decision model |
 | [ADR-06](adr/ADR-06-context-fitted-prompts.md) | Fit every prompt into the window of the runtime |
 | [ADR-09](adr/ADR-09-commits-are-counted-once.md) | Count every commit once |
+| [ADR-10](adr/ADR-10-the-decision-server-is-asked-four-times.md) | Ask the decision server four times, not thirty |
+| [ADR-11](adr/ADR-11-build-for-the-machine.md) | Build the dashboard for the machine it runs on |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |
