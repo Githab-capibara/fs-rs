@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use fsrs_acp::{
@@ -137,6 +137,19 @@ pub struct Worker {
     /// dashboard, so the pair is behind a lock: the client is replaced only
     /// when the settings really changed.
     client: RwLock<(FoqSettings, Arc<FoqClient>)>,
+    /// The statistics of the commits of every repository, by the identifier of
+    /// the repository and the SHA of the commit.
+    ///
+    /// The statistics of a commit never change: the diff of a commit against
+    /// its first parent is the same forever. The dashboard therefore keeps
+    /// them between two synchronisations and hands them to the next one, so
+    /// that a fork that did not move is listed without a single diff.
+    ///
+    /// The cache lives here and not in the interface, because the interface
+    /// would have to read the statistics back from the database before every
+    /// synchronisation — one query and one parsing of the list of the files of
+    /// every commit.
+    known: Arc<Mutex<HashMap<i64, HashMap<String, CommitStats>>>>,
 }
 
 impl Worker {
@@ -156,6 +169,7 @@ impl Worker {
             sender,
             receiver,
             client: RwLock::new((settings, client)),
+            known: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -184,17 +198,30 @@ impl Worker {
 
     /// Fetch the upstream branch of a repository and list the missing commits.
     ///
-    /// The statistics of the commits that were listed before are read from the
-    /// store on the caller's thread and handed to the background thread: a
-    /// fork that did not move since the last synchronisation lists its pending
-    /// commits without computing a single diff. The store itself is not shared
-    /// — a SQLite connection is bound to one thread.
-    pub fn sync_repo(&self, repo: Repo, known: HashMap<String, CommitStats>) {
+    /// The statistics of the commits that were listed before are taken from
+    /// the cache of the worker and handed to the background thread: a fork
+    /// that did not move since the last synchronisation lists its pending
+    /// commits without computing a single diff. The caller may hand them over
+    /// itself — that is what the first synchronisation does, with the
+    /// statistics that were read from the store — and the worker keeps them
+    /// for the next one.
+    ///
+    /// The store itself is not shared — a SQLite connection is bound to one
+    /// thread.
+    pub fn sync_repo(&self, repo: Repo, known: Option<HashMap<String, CommitStats>>) {
         let sender = self.sender.clone();
+        let cache = Arc::clone(&self.known);
         self.runtime.spawn_blocking(move || {
             let repo_id = repo.id;
             let started = Instant::now();
-            match catalog::sync_repo(&repo, &known) {
+            let mut known = known.unwrap_or_else(|| {
+                cache
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .remove(&repo_id)
+                    .unwrap_or_default()
+            });
+            match catalog::sync_repo(&repo, &mut known) {
                 Ok(commits) => {
                     tracing::info!(
                         repo_id,
@@ -202,6 +229,15 @@ impl Worker {
                         elapsed_ms = started.elapsed().as_millis(),
                         "sync finished"
                     );
+                    // The statistics of the commits that are pending are kept
+                    // for the next synchronisation. They are read out of the
+                    // commits themselves, so the database is not asked for
+                    // them again.
+                    let stats = fsrs_core::git::stats_of(&commits);
+                    cache
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .insert(repo_id, stats);
                     let _ = sender.send(WorkerMessage::Synced { repo_id, commits });
                 }
                 Err(error) => {
@@ -211,6 +247,12 @@ impl Worker {
                         %error,
                         "sync failed"
                     );
+                    // The statistics that were not used are kept: the next
+                    // synchronisation does not have to compute them again.
+                    cache
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .insert(repo_id, known);
                     let _ = sender.send(WorkerMessage::SyncFailed {
                         repo_id,
                         error: error.to_string(),
@@ -427,7 +469,7 @@ mod tests {
             pending_commits: 0,
             last_fetched_at: None,
         };
-        worker.sync_repo(repo, Default::default());
+        worker.sync_repo(repo, None);
         // The directory is not a repository, so the job has to fail — but it
         // has to report the failure instead of hanging.
         let mut messages = Vec::new();
@@ -442,5 +484,91 @@ mod tests {
             messages.first(),
             Some(WorkerMessage::SyncFailed { .. })
         ));
+    }
+
+    #[test]
+    fn the_statistics_of_the_commits_are_kept_for_the_next_synchronisation() {
+        let worker = Worker::new().expect("the runtime should start");
+        let temp = tempfile::tempdir().unwrap();
+        let upstream = temp.path().join("upstream");
+        let fork = temp.path().join("fork");
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("running git");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q", "-b", "main"]);
+        git(&upstream, &["config", "user.email", "upstream@example.com"]);
+        git(&upstream, &["config", "user.name", "Upstream"]);
+        std::fs::write(upstream.join("a.txt"), "one\n").unwrap();
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "-q", "-m", "First"]);
+        git(
+            temp.path(),
+            &[
+                "clone",
+                "-q",
+                upstream.to_str().unwrap(),
+                fork.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(upstream.join("b.txt"), "two\n").unwrap();
+        git(&upstream, &["add", "."]);
+        git(&upstream, &["commit", "-q", "-m", "Second"]);
+
+        let repo = Repo {
+            id: 9,
+            name: "demo".to_string(),
+            path: fork,
+            upstream_url: upstream.to_string_lossy().to_string(),
+            upstream_web: String::new(),
+            main_branch: "main".to_string(),
+            pending_commits: 0,
+            last_fetched_at: None,
+        };
+
+        // The first synchronisation computes the statistics of the commit.
+        worker.sync_repo(repo.clone(), None);
+        let commits = wait_for_sync(&worker);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].summary, "Second");
+        let cache = worker.known.lock().unwrap();
+        let cached = cache
+            .get(&repo.id)
+            .expect("the statistics of the commits are kept");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(
+            cached.get(&commits[0].sha).map(|stats| stats.files.clone()),
+            Some(vec!["b.txt".to_string()])
+        );
+        drop(cache);
+
+        // The second one finds them in the cache: the worker is asked for no
+        // statistics at all, and the commit is listed all the same.
+        worker.sync_repo(repo, None);
+        let commits = wait_for_sync(&worker);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].sha, commits[0].sha);
+    }
+
+    /// Wait for the result of a synchronisation and return its commits.
+    fn wait_for_sync(worker: &Worker) -> Vec<UpstreamCommit> {
+        for _ in 0..200 {
+            for message in worker.drain() {
+                if let WorkerMessage::Synced { commits, .. } = message {
+                    return commits;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("the synchronisation did not report anything");
     }
 }

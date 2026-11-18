@@ -124,7 +124,7 @@ fn synchronising_lists_the_commits_that_are_missing() {
     let fork = make_fork(temp.path(), &upstream);
     add_upstream_commit(&upstream);
 
-    let commits = sync_repo(&repo_row(1, &fork, &upstream), &Default::default()).unwrap();
+    let commits = sync_repo(&repo_row(1, &fork, &upstream), &mut Default::default()).unwrap();
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].summary, "Second upstream commit");
     assert_eq!(commits[0].repo_id, 1);
@@ -148,7 +148,7 @@ fn synchronising_a_fork_that_is_up_to_date_finds_nothing() {
     );
     git(&fork, &["reset", "--hard", "origin/main"]);
 
-    let commits = sync_repo(&repo_row(1, &fork, &upstream), &Default::default()).unwrap();
+    let commits = sync_repo(&repo_row(1, &fork, &upstream), &mut Default::default()).unwrap();
     assert!(commits.is_empty());
 }
 
@@ -159,7 +159,7 @@ fn synchronising_creates_the_upstream_remote() {
     let fork = make_fork(temp.path(), &upstream);
     add_upstream_commit(&upstream);
 
-    sync_repo(&repo_row(1, &fork, &upstream), &Default::default()).unwrap();
+    sync_repo(&repo_row(1, &fork, &upstream), &mut Default::default()).unwrap();
 
     let repo = fsrs_core::git::GitRepo::open(&fork).unwrap();
     assert_eq!(

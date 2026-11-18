@@ -45,6 +45,11 @@ number of the slots of the server bounds the number of the ratings that are
 in flight: a request that waits in the queue of the server waits for the
 model anyway.
 
+The worker also keeps the statistics of the commits of every repository. The
+statistics of a commit never change, so they are kept between two
+synchronisations and handed to the next one: a fork that did not move is
+listed without a single diff, and the database is not read for them.
+
 ## Related documents
 
 | Document | Purpose |
@@ -54,5 +59,6 @@ model anyway.
 | [ADR-10](../../docs/adr/ADR-10-the-decision-server-is-asked-four-times.md) | Why the dashboard asks the decision server four times per commit |
 | [ADR-11](../../docs/adr/ADR-11-build-for-the-machine.md) | Why the build is tuned for the machine it runs on |
 | [ADR-13](../../docs/adr/ADR-13-rate-the-commits-one-at-a-time.md) | Why the ratings never outnumber the slots of the decision server |
+| [ADR-18](../../docs/adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Why the worker keeps the statistics of the commits |
 | [Design note — the dashboard layout](../../docs/design/01-dashboard-layout.md) | The window, the threads, the picker, the screenshot |
 | [Getting started](../../docs/guides/01-getting-started.md) | The first run of the dashboard |

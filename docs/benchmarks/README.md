@@ -148,22 +148,29 @@ time on.
 
 ## The start of the program
 
-The startup is the time between the click on the icon and the first frame.
-The script that measures it runs the binaries one after another, so the
-machine is in the same state for every one of them, and reports the median:
+The startup is the time the machine needs before the program does anything:
+the loading of the binary, the dynamic linker and the runtime of rust. The
+script that measures it runs the binary with `--help` — it reads its
+arguments, writes its help and exits — and it runs the binaries one after
+another, so the machine is in the same state for every one of them, and
+reports the median:
 
 ```bash
 python3 scripts/measure-startup.py target/release/fsrs target/pgo/release/fsrs
 ```
 
-| Binary | The start of the program |
-|--------|--------------------------|
+| Binary | The start of the process |
+|--------|---------------------------|
 | The ordinary build | 3364 µs |
 | The build with the profile | 3312 µs |
 
 The numbers are the medians of forty runs of each binary. The difference is
 inside the noise: the start of the program is the loading of the binary and
 the reading of the configuration, and neither of them is hot code.
+
+The first frame of the window is a different measurement — it is the creation
+of the surface and the first draw of the program — and the program logs it
+when it happens: 60 ms to 180 ms on this machine, depending on the compositor.
 
 ## The layout of the code again — BOLT
 
@@ -252,31 +259,59 @@ small file, so every diff is real.
 
 ## The numbers
 
-| Operation | Path | Time |
-|-----------|------|------|
-| Listing 200 pending commits | the previous path: a diff per commit | 32.33 ms |
-| Listing 200 pending commits | statistics known, no diff computed | 2.73 ms |
-| Listing 200 pending commits | the first listing, nothing known | 32.33 ms |
-| Listing 200 pending commits | metadata only, no diff at all | 2.69 ms |
-| Statistics of one commit | two trees compared | 148.22 µs |
-| Metadata of one commit | the commit object read | 293.32 ns |
-| Storing 500 rows | the previous path: delete all, insert all | 1.05 ms |
-| Storing 500 rows | upsert, every row changed | 398.06 µs |
-| Storing 500 rows | upsert, the list did not move | 164.67 µs |
-| Synchronisation end to end | cold, statistics unknown | 37.65 ms |
-| Synchronisation end to end | warm, statistics known | 4.43 ms |
+The numbers were measured on the same machine and with the same compiler,
+before and after the changes of the sixth wave. The "before" column is the
+code of the fifth wave, measured again so that the two columns can be
+compared.
 
-The warm synchronisation is **8.5x faster** than the cold one and **7.3x
+| Operation | Path | Before | After |
+|-----------|------|--------|-------|
+| Listing 200 pending commits | every diff is computed | 32.53 ms | 23.60 ms |
+| Listing 200 pending commits | statistics known, no diff computed | 3.03 ms | 2.66 ms |
+| Listing 200 pending commits | the first listing, nothing known | 36.74 ms | 24.42 ms |
+| Listing 200 pending commits | metadata only, no diff at all | 2.87 ms | 2.64 ms |
+| Statistics of one commit | two trees compared | 146.40 µs | 107.74 µs |
+| Metadata of one commit | the commit object read | 283.90 ns | 281.67 ns |
+| Storing 500 rows | the previous path: delete all, insert all | 1.00 ms | 1.00 ms |
+| Storing 500 rows | every row written again | 378.65 µs | 222.20 µs |
+| Storing 500 rows | the list did not move | 157.76 µs | 164.82 µs |
+| Synchronisation end to end | cold, statistics unknown | 37.07 ms | 28.92 ms |
+| Synchronisation end to end | warm, statistics known | 4.93 ms | 4.90 ms |
+| Synchronisation end to end | the fetch alone, nothing is listed | — | 625.11 µs |
+| Reading the statistics of 200 commits from the database | the path the interface used before | 125.46 µs | — |
+
+The times are the medians of ten runs of Criterion. The rows of the store are
+the ones of a database on the disk, and the store of the benchmark holds five
+hundred rows of commits.
+
+The listing of the pending commits is **27% faster**, and the statistics of
+one commit are **26% faster**: the lines of a diff are counted in one walk of
+the diff now, instead of two — see
+[ADR-16](../adr/ADR-16-count-the-lines-of-a-commit-in-one-pass.md).
+
+The row of the store that did not move costs the same as before, and it does
+not write a single page now: the store writes the difference between the list
+it has and the list it receives — see
+[ADR-17](../adr/ADR-17-write-only-the-rows-that-really-changed.md). The row
+that changed is 40% faster, because one row is written instead of five
+hundred.
+
+The warm synchronisation is **5.9x faster** than the cold one and **6.6x
 faster** than the previous path, because the only thing that is computed is
-what changed. The list is stored only when it actually differs from what is
-already on disk.
+what changed. It does not read the database any more: the worker keeps the
+statistics of the commits in memory — see
+[ADR-18](../adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md).
 
-The statistics of one commit are **505x** more expensive than its metadata:
-148 µs against 293 ns. The diff of the commit is the price of the listing,
+The statistics of one commit are **382x** more expensive than its metadata:
+108 µs against 282 ns. The diff of the commit is the price of the listing,
 and the metadata — the author, the message, the time — is free. The split of
 the two halves is what makes the two numbers above possible: the listing with
 the metadata only and no diff at all is as fast as the listing with the
 statistics that are already known.
+
+The fetch alone — the opening of the repository and the fetch of the upstream
+— is 625 µs of the warm synchronisation, and the rest is the listing of the
+commits that are pending.
 
 ## Why a commit is not measured twice
 

@@ -19,11 +19,24 @@ use crate::{Repo, UpstreamCommit};
 /// example `https://github.com/owner/project`. The result points at the
 /// commit page of the given object id.
 pub fn commit_url(upstream_web: &str, sha: &str) -> String {
+    let prefix = commit_url_prefix(upstream_web);
+    if prefix.is_empty() {
+        return String::new();
+    }
+    format!("{prefix}{sha}")
+}
+
+/// The beginning of the address of every commit of an upstream.
+///
+/// The address of a commit is its prefix and its object id, so the store can
+/// rewrite the addresses of the commits of a repository with one statement
+/// when the address of the upstream changes.
+pub fn commit_url_prefix(upstream_web: &str) -> String {
     let base = upstream_web.trim_end_matches('/');
     if base.is_empty() {
         return String::new();
     }
-    format!("{base}/commit/{sha}")
+    format!("{base}/commit/")
 }
 
 /// Convert a pending commit into the domain type used by the dashboard.
@@ -59,8 +72,13 @@ pub fn to_upstream_commit(
 ///
 /// `known` carries the diff statistics of a previous synchronisation, keyed by
 /// SHA. A commit is immutable, so its statistics never change after the first
-/// listing; only the SHAs that are absent from `known` are computed again.
-pub fn sync_repo(repo: &Repo, known: &HashMap<String, CommitStats>) -> Result<Vec<UpstreamCommit>> {
+/// listing; only the SHAs that are absent from `known` are computed again. The
+/// statistics of the commits that are pending are taken out of the map, so the
+/// lists of their files are never copied.
+pub fn sync_repo(
+    repo: &Repo,
+    known: &mut HashMap<String, CommitStats>,
+) -> Result<Vec<UpstreamCommit>> {
     let git = GitRepo::open(&repo.path)?;
     if !repo.upstream_url.trim().is_empty() {
         git.ensure_upstream_remote(&repo.upstream_url)?;

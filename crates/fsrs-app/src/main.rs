@@ -11,6 +11,14 @@ use fsrs_app::app::{FsrsApp, process_started};
 use fsrs_app::worker::Worker;
 use fsrs_core::{Store, config};
 
+/// The allocator of the program.
+///
+/// The window allocates and frees thousands of small blocks per frame, and
+/// this allocator is faster than the one of the system for them. See
+/// [ADR-11](../../docs/adr/ADR-11-build-for-the-machine.md).
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// The configuration file that is written when the dashboard starts for the
 /// first time.
 const DEFAULT_CONFIG: &str = r#"# fs-rs — the dashboard that ports upstream commits into forks.

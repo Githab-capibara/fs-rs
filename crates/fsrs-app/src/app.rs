@@ -297,6 +297,7 @@ impl FsrsApp {
     fn load_repositories(&mut self) {
         let configured = self.config.repos.clone();
         let mut views = Vec::new();
+        let mut known = Vec::new();
 
         for entry in configured {
             let path = entry.path.clone();
@@ -334,16 +335,17 @@ impl FsrsApp {
                 }
             }
             view.syncing = true;
+            // The statistics of the commits are read out of the commits that
+            // were just loaded: the database is not asked for them a second
+            // time.
+            known.push(fsrs_core::git::stats_of(&view.commits));
             views.push(view);
         }
 
         self.repos = views;
         self.selected_repo = if self.repos.is_empty() { None } else { Some(0) };
-        for view in &self.repos {
-            self.worker.sync_repo(
-                view.repo.clone(),
-                self.store.commit_stats(view.repo.id).unwrap_or_default(),
-            );
+        for (view, stats) in self.repos.iter().zip(known) {
+            self.worker.sync_repo(view.repo.clone(), Some(stats));
         }
     }
 
@@ -598,10 +600,9 @@ impl FsrsApp {
             view.syncing = true;
         }
         for view in &self.repos {
-            self.worker.sync_repo(
-                view.repo.clone(),
-                self.store.commit_stats(view.repo.id).unwrap_or_default(),
-            );
+            // The statistics of the commits are kept by the worker: they are
+            // handed to the background thread from there.
+            self.worker.sync_repo(view.repo.clone(), None);
         }
     }
 
@@ -691,8 +692,8 @@ impl FsrsApp {
                 if let Some(view) = self.repos.get(index) {
                     let repo = view.repo.clone();
                     self.repos[index].syncing = true;
-                    let known = self.store.commit_stats(repo.id).unwrap_or_default();
-                    self.worker.sync_repo(repo, known);
+                    // The statistics of the commits are kept by the worker.
+                    self.worker.sync_repo(repo, None);
                 }
             }
             Action::AssessAll(index) => {

@@ -115,6 +115,45 @@ pub struct CommitStats {
     pub deletions: u32,
 }
 
+/// The statistics of a list of commits, keyed by the SHA of the commit.
+///
+/// The list is the one the program already holds: the statistics of its
+/// commits are the statistics of the commits themselves. Reading them from the
+/// database instead would parse the same list of files a second time.
+pub fn stats_of(commits: &[crate::UpstreamCommit]) -> HashMap<String, CommitStats> {
+    let mut out = HashMap::with_capacity(commits.len());
+    for commit in commits {
+        out.insert(
+            commit.sha.clone(),
+            CommitStats {
+                files: commit.files.clone(),
+                insertions: commit.insertions,
+                deletions: commit.deletions,
+            },
+        );
+    }
+    out
+}
+
+/// The statistics of a list of pending commits, keyed by the SHA of the commit.
+///
+/// The same as [`stats_of`], for the commits of a listing that has not been
+/// turned into the commits of the database yet.
+pub fn stats_of_pending(commits: &[PendingCommit]) -> HashMap<String, CommitStats> {
+    let mut out = HashMap::with_capacity(commits.len());
+    for commit in commits {
+        out.insert(
+            commit.sha.clone(),
+            CommitStats {
+                files: commit.files.clone(),
+                insertions: commit.insertions,
+                deletions: commit.deletions,
+            },
+        );
+    }
+    out
+}
+
 /// The cheap part of a commit.
 ///
 /// Everything here reads the commit object itself: no tree is compared, no
@@ -287,13 +326,20 @@ impl GitRepo {
     /// so the statistics of a SHA that was listed before do not have to be
     /// computed again. `known` carries them by SHA. Only the commits that are
     /// missing from `known` pay for [`Self::describe_commit`]; the others are
-    /// copied, which makes a refresh of a fork that did not move almost free.
+    /// taken out of the map, which makes a refresh of a fork that did not move
+    /// almost free.
+    ///
+    /// The map is consumed entry by entry: the statistics of the commits that
+    /// are pending are moved into the result instead of being copied. The
+    /// lists of the files of a commit are the bulk of a [`CommitStats`], and a
+    /// refresh of a backlog of a thousand commits would copy them a thousand
+    /// times.
     ///
     /// Result is ordered newest first.
     pub fn pending_commits_incremental(
         &self,
         branch: &str,
-        known: &HashMap<String, CommitStats>,
+        known: &mut HashMap<String, CommitStats>,
     ) -> Result<Vec<PendingCommit>> {
         let local = self.branch_commit(branch)?;
         let upstream = self.upstream_commit(branch)?;
@@ -306,10 +352,10 @@ impl GitRepo {
             let oid = oid?;
             let sha = oid.to_string();
             let commit = self.repo.find_commit(oid)?;
-            if let Some(stats) = known.get(&sha) {
+            if let Some(stats) = known.remove(&sha) {
                 // The statistics are already known: reuse them and skip the
                 // tree-to-tree diff entirely.
-                pending.push(self.describe_commit_with_stats(&commit, stats.clone(), None)?);
+                pending.push(self.describe_commit_with_stats(&commit, stats, None)?);
             } else {
                 pending.push(self.describe_commit(&commit)?);
             }
@@ -363,6 +409,14 @@ impl GitRepo {
     }
 
     /// Compute diff statistics for a commit against its first parent.
+    ///
+    /// The diff is walked once: the names of the files and the number of the
+    /// lines are collected in the same pass. `git2` can count the lines on its
+    /// own, but that is a second walk of the same diff, and the diff is the
+    /// most expensive part of the listing of the commits.
+    ///
+    /// A binary file has no lines to count, so it adds nothing to the
+    /// statistics — the same as the count of `git2` itself.
     pub fn commit_stats(&self, commit: &Commit<'_>) -> Result<CommitStats> {
         let tree = commit.tree()?;
         let parent_tree = match commit.parent(0) {
@@ -385,11 +439,15 @@ impl GitRepo {
             },
             None,
             None,
-            None,
+            Some(&mut |_delta, _hunk, line| {
+                match line.origin() {
+                    '+' => stats.insertions += 1,
+                    '-' => stats.deletions += 1,
+                    _ => {}
+                }
+                true
+            }),
         )?;
-        let diff_stats = diff.stats().context("computing diff statistics")?;
-        stats.insertions = diff_stats.insertions() as u32;
-        stats.deletions = diff_stats.deletions() as u32;
         stats.files = files.into_iter().collect();
         Ok(stats)
     }

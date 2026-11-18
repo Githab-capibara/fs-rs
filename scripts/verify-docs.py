@@ -177,6 +177,12 @@ check(
     and "fn concurrent_assessment_limit(slots: usize) -> usize" in app,
     "MAX_CONCURRENT_ASSESSMENTS and the limit of the slots",
 )
+main = read("crates/fsrs-app/src/main.rs")
+check(
+    "The allocator of the program is the one that ADR-11 promised",
+    "#[global_allocator]" in main and "mimalloc::MiMalloc" in main,
+    "the allocator of the program",
+)
 
 # --- The git layer ----------------------------------------------------
 git = read("crates/fsrs-core/src/git.rs")
@@ -189,6 +195,44 @@ check(
     "The metadata of a commit can be read without a diff",
     "pub fn commit_meta" in git and "pub fn pending_commit_metadata" in git,
     "the split of the metadata and the statistics of a commit",
+)
+check(
+    "The lines of a diff are counted in one walk of the diff",
+    "Some(&mut |_delta, _hunk, line|" in git and "diff.stats()" not in git,
+    "the counting of the lines of a commit",
+)
+check(
+    "The statistics of the commits are moved, not copied",
+    "known.remove(&sha)" in git and "pub fn stats_of" in git,
+    "the map of the statistics",
+)
+
+# --- The store --------------------------------------------------------
+store = read("crates/fsrs-core/src/store.rs")
+check(
+    "The store writes only the rows that really changed",
+    "fn stored_shas" in store
+    and "fn confirm_pending_count" in store
+    and "json_each" not in store,
+    "the write of the list of the pending commits",
+)
+check(
+    "The counter of the writes of the store is part of its interface",
+    "pub fn total_changes" in store,
+    "the counter of the writes",
+)
+check(
+    "The runs of a repository are indexed",
+    "idx_runs_repo" in store,
+    "the index of the runs",
+)
+
+# --- The worker -------------------------------------------------------
+worker = read("crates/fsrs-app/src/worker.rs")
+check(
+    "The worker keeps the statistics of the commits in memory",
+    "known: Arc<Mutex<HashMap<i64, HashMap<String, CommitStats>>>>" in worker,
+    "the cache of the statistics",
 )
 
 # --- The live tests ---------------------------------------------------

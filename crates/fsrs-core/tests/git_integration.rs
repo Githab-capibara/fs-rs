@@ -143,7 +143,7 @@ fn incremental_listing_reuses_the_known_statistics_and_skips_the_dead_code() {
 
     // The statistics of the fork that was measured once are enough to list
     // the same commits again without computing a single diff.
-    let known: std::collections::HashMap<String, fsrs_core::git::CommitStats> = full
+    let mut known: std::collections::HashMap<String, fsrs_core::git::CommitStats> = full
         .iter()
         .map(|pending| {
             (
@@ -156,7 +156,9 @@ fn incremental_listing_reuses_the_known_statistics_and_skips_the_dead_code() {
             )
         })
         .collect();
-    let cached = repo.pending_commits_incremental("main", &known).unwrap();
+    let cached = repo
+        .pending_commits_incremental("main", &mut known)
+        .unwrap();
 
     assert_eq!(cached.len(), full.len());
     for (cached, expected) in cached.iter().zip(full.iter()) {
@@ -170,7 +172,7 @@ fn incremental_listing_reuses_the_known_statistics_and_skips_the_dead_code() {
 
     // With an empty cache every commit is described from scratch: same result.
     let cold = repo
-        .pending_commits_incremental("main", &std::collections::HashMap::new())
+        .pending_commits_incremental("main", &mut std::collections::HashMap::new())
         .unwrap();
     assert_eq!(cold.len(), full.len());
     assert_eq!(cold[0].sha, full[0].sha);
@@ -260,6 +262,60 @@ fn the_git_options_of_the_performance_are_turned_off() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].files, vec!["b.txt".to_string()]);
     assert_eq!(pending[0].insertions, 1);
+}
+
+#[test]
+fn the_statistics_of_a_commit_are_the_ones_of_git_itself() {
+    // The statistics are counted in one pass of the diff, by the program
+    // itself. They have to be the same numbers that `git` reports.
+    let temp = tempfile::tempdir().unwrap();
+    let upstream = make_upstream(temp.path());
+    let fork = make_fork(temp.path(), &upstream);
+    add_second_upstream_commit(&upstream);
+    add_upstream_commit(&upstream);
+
+    // A commit that changes several lines of a file, and one that removes a
+    // file, so that both directions of the count are exercised.
+    std::fs::write(upstream.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    git(&upstream, &["add", "."]);
+    git(&upstream, &["commit", "-q", "-m", "More lines"]);
+    std::fs::remove_file(upstream.join("a.txt")).unwrap();
+    git(&upstream, &["add", "-A"]);
+    git(&upstream, &["commit", "-q", "-m", "Remove the file"]);
+
+    let repo = GitRepo::open(&fork).unwrap();
+    repo.ensure_upstream_remote(upstream.to_str().unwrap())
+        .unwrap();
+    repo.fetch_upstream("main").unwrap();
+
+    let pending = repo.pending_commits("main").unwrap();
+    assert_eq!(pending.len(), 4);
+    for commit in &pending {
+        let numstat = git(&fork, &["show", "--numstat", "--format=", &commit.sha]);
+        let (mut insertions, mut deletions) = (0_u32, 0_u32);
+        for line in numstat.lines().filter(|line| !line.trim().is_empty()) {
+            let mut fields = line.split('\t');
+            let added = fields.next().unwrap_or_default();
+            let removed = fields.next().unwrap_or_default();
+            // A binary file has no lines to count: `git` prints a dash.
+            if let Ok(added) = added.parse::<u32>() {
+                insertions += added;
+            }
+            if let Ok(removed) = removed.parse::<u32>() {
+                deletions += removed;
+            }
+        }
+        assert_eq!(
+            commit.insertions, insertions,
+            "the insertions of {} differ",
+            commit.sha
+        );
+        assert_eq!(
+            commit.deletions, deletions,
+            "the deletions of {} differ",
+            commit.sha
+        );
+    }
 }
 
 #[test]

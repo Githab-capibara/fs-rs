@@ -19,6 +19,9 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-13](ADR-13-rate-the-commits-one-at-a-time.md) | Rate the commits one at a time | Accepted |
 | [ADR-14](ADR-14-keep-egui-036-while-the-terminal-widget-needs-it.md) | Keep egui 0.36 while the terminal widget needs it | Accepted |
 | [ADR-15](ADR-15-lay-the-code-out-again-with-bolt.md) | Lay the code out again with BOLT | Accepted |
+| [ADR-16](ADR-16-count-the-lines-of-a-commit-in-one-pass.md) | Count the lines of a commit in one pass | Accepted |
+| [ADR-17](ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed | Accepted |
+| [ADR-18](ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory | Accepted |
 
 ## How to read an ADR
 

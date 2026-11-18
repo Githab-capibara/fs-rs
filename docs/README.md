@@ -38,6 +38,9 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-13](adr/ADR-13-rate-the-commits-one-at-a-time.md) | Rate the commits one at a time |
 | [ADR-14](adr/ADR-14-keep-egui-036-while-the-terminal-widget-needs-it.md) | Keep egui 0.36 while the terminal widget needs it |
 | [ADR-15](adr/ADR-15-lay-the-code-out-again-with-bolt.md) | Lay the code out again with BOLT |
+| [ADR-16](adr/ADR-16-count-the-lines-of-a-commit-in-one-pass.md) | Count the lines of a commit in one pass |
+| [ADR-17](adr/ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed |
+| [ADR-18](adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |

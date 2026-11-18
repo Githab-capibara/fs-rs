@@ -4,15 +4,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::git::CommitStats;
 use crate::{Assessment, Complexity, Criticality, Repo, Run, RunEvent, RunState, UpstreamCommit};
-
-/// The SHAs of `commits`, for the `json_each` membership test.
-fn shas(commits: &[UpstreamCommit]) -> Vec<&str> {
-    commits.iter().map(|commit| commit.sha.as_str()).collect()
-}
 
 /// SQLite-backed store of all dashboard state.
 pub struct Store {
@@ -127,13 +122,31 @@ impl Store {
 
             CREATE INDEX IF NOT EXISTS idx_commits_repo ON commits(repo_id, committed_at DESC);
             CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, id);
+            -- The runs of a repository are listed newest first, and the rows
+            -- of a repository are deleted with it: the index serves both.
+            CREATE INDEX IF NOT EXISTS idx_runs_repo ON runs(repo_id, id DESC);
             "#,
         )?;
         Ok(())
     }
 
     /// Insert or update a repository, returning its identifier.
+    ///
+    /// The address of the web page of the upstream is part of the address of
+    /// every commit of the repository. When it changes, the addresses of the
+    /// stored commits are rewritten with it — one statement for the whole
+    /// repository, and none when the address did not change.
     pub fn upsert_repo(&self, repo: &Repo) -> Result<i64> {
+        // The address the repository had before: the commits of the old
+        // address have to follow the new one.
+        let previous: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT upstream_web FROM repos WHERE path = ?1",
+                params![repo.path.to_string_lossy()],
+                |row| row.get(0),
+            )
+            .optional()?;
         // One statement: the identifier comes back with the write.
         let id: i64 = self.conn.query_row(
             r#"
@@ -159,7 +172,32 @@ impl Store {
             ],
             |row| row.get(0),
         )?;
+        if let Some(previous) = previous
+            && previous != repo.upstream_web
+        {
+            self.rewrite_commit_urls(id, &repo.upstream_web)?;
+        }
         Ok(id)
+    }
+
+    /// Rewrite the addresses of the commits of a repository.
+    ///
+    /// The address of a commit is the address of the upstream and its object
+    /// id, so one statement rewrites all of them.
+    fn rewrite_commit_urls(&self, repo_id: i64, upstream_web: &str) -> Result<()> {
+        let prefix = crate::catalog::commit_url_prefix(upstream_web);
+        if prefix.is_empty() {
+            self.conn.execute(
+                "UPDATE commits SET url = '' WHERE repo_id = ?1",
+                params![repo_id],
+            )?;
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE commits SET url = ?2 || sha WHERE repo_id = ?1",
+            params![repo_id, prefix],
+        )?;
+        Ok(())
     }
 
     /// List all tracked repositories.
@@ -216,48 +254,52 @@ impl Store {
 
     /// Replace the pending commit list of a repository.
     ///
-    /// Every commit is upserted by its SHA: the rows of the commits that are
-    /// already stored are updated in place instead of being rewritten. The
-    /// whole list is still replaced as a set — the SHAs that are absent from
-    /// `commits` are deleted.
+    /// The list is replaced as a set: the commits that are new are inserted,
+    /// the commits that are no longer pending are deleted, and the commits
+    /// that are already stored are left alone.
+    ///
+    /// A commit is immutable: its message, its author, its dates and the
+    /// statistics of its diff never change. Rewriting a stored row would only
+    /// burn a page, so the rows that are already correct are not touched. The
+    /// address of the commit is the one thing that can change — it carries the
+    /// address of the web page of the upstream — and it follows the address of
+    /// the repository, which [`Self::upsert_repo`] rewrites.
     ///
     /// A call whose list is already stored writes nothing at all: a poll of a
     /// repository that did not move costs one read of the SHAs and no page.
-    /// A commit is immutable, so a stored row of a pending SHA is already
-    /// correct and rewriting it would only burn a page.
     pub fn replace_commits(&self, repo_id: i64, commits: &[UpstreamCommit]) -> Result<()> {
-        if self.commits_match(repo_id, commits)? {
-            // The pending count is still confirmed: it is the number of rows
-            // that the list matched.
-            self.conn.execute(
-                "UPDATE repos SET pending_commits = ?2 WHERE id = ?1",
-                params![repo_id, commits.len() as i64],
-            )?;
+        let stored = self.stored_shas(repo_id)?;
+        let incoming: std::collections::HashSet<&str> =
+            commits.iter().map(|commit| commit.sha.as_str()).collect();
+
+        let added: Vec<&UpstreamCommit> = commits
+            .iter()
+            .filter(|commit| !stored.contains(commit.sha.as_str()))
+            .collect();
+        let removed: Vec<&str> = stored
+            .iter()
+            .filter(|sha| !incoming.contains(sha.as_str()))
+            .map(|sha| sha.as_str())
+            .collect();
+
+        if added.is_empty() && removed.is_empty() {
+            // The set is the same: the count is confirmed only when it is
+            // wrong, so an unchanged poll writes no page at all.
+            self.confirm_pending_count(repo_id, commits.len())?;
             return Ok(());
         }
+
         let tx = self.conn.unchecked_transaction()?;
         {
-            let mut stmt = tx.prepare_cached(
+            let mut insert = tx.prepare_cached(
                 r#"
                 INSERT INTO commits (repo_id, sha, short_sha, summary, body, author, author_email,
                                      authored_at, committed_at, files, insertions, deletions, url)
                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                ON CONFLICT(repo_id, sha) DO UPDATE SET
-                    short_sha = excluded.short_sha,
-                    summary = excluded.summary,
-                    body = excluded.body,
-                    author = excluded.author,
-                    author_email = excluded.author_email,
-                    authored_at = excluded.authored_at,
-                    committed_at = excluded.committed_at,
-                    files = excluded.files,
-                    insertions = excluded.insertions,
-                    deletions = excluded.deletions,
-                    url = excluded.url
                 "#,
             )?;
-            for commit in commits {
-                stmt.execute(params![
+            for commit in &added {
+                insert.execute(params![
                     repo_id,
                     commit.sha,
                     commit.short_sha,
@@ -274,13 +316,13 @@ impl Store {
                 ])?;
             }
         }
-        // Keep the set semantics of the previous implementation: the commits
-        // that are no longer pending leave the store.
-        let mut delete = tx.prepare_cached(
-            "DELETE FROM commits WHERE repo_id = ?1 AND sha NOT IN (SELECT value FROM json_each(?2))",
-        )?;
-        delete.execute(params![repo_id, sonic_rs::to_string(&shas(commits))?])?;
-        drop(delete);
+        {
+            let mut delete =
+                tx.prepare_cached("DELETE FROM commits WHERE repo_id = ?1 AND sha = ?2")?;
+            for sha in &removed {
+                delete.execute(params![repo_id, sha])?;
+            }
+        }
         tx.execute(
             "UPDATE repos SET pending_commits = ?2 WHERE id = ?1",
             params![repo_id, commits.len() as i64],
@@ -289,22 +331,50 @@ impl Store {
         Ok(())
     }
 
-    /// Whether the store already holds exactly the SHAs of `commits`.
+    /// The SHAs of the commits of a repository.
     ///
-    /// One statement reads the SHAs of the repository; the comparison happens
-    /// against the list, which is short. A difference of either side returns
-    /// false, so the caller falls back to writing.
-    fn commits_match(&self, repo_id: i64, commits: &[UpstreamCommit]) -> Result<bool> {
+    /// One statement reads the column that decides whether a row has to be
+    /// written. The rows of the commits are not read, and they are not written
+    /// either, unless the set of the commits really changed.
+    fn stored_shas(&self, repo_id: i64) -> Result<std::collections::HashSet<String>> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT sha FROM commits WHERE repo_id = ?1")?;
-        let stored: std::collections::HashSet<String> = stmt
-            .query_map(params![repo_id], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<std::collections::HashSet<String>, _>>()?;
-        if stored.len() != commits.len() {
-            return Ok(false);
+        let rows = stmt.query_map(params![repo_id], |row| row.get::<_, String>(0))?;
+        let mut out = std::collections::HashSet::with_capacity(1024);
+        for row in rows {
+            out.insert(row?);
         }
-        Ok(commits.iter().all(|commit| stored.contains(&commit.sha)))
+        Ok(out)
+    }
+
+    /// Write the number of the pending commits when it is not the one that is
+    /// stored.
+    ///
+    /// The number is confirmed after every synchronisation, but a repository
+    /// that did not move keeps the number it has, and the write of the same
+    /// value would take the write lock of the database for nothing.
+    fn confirm_pending_count(&self, repo_id: i64, count: usize) -> Result<()> {
+        let stored: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT pending_commits FROM repos WHERE id = ?1",
+                params![repo_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match stored {
+            Some(stored) if stored == count as i64 => Ok(()),
+            Some(_) => {
+                self.conn.execute(
+                    "UPDATE repos SET pending_commits = ?2 WHERE id = ?1",
+                    params![repo_id, count as i64],
+                )?;
+                Ok(())
+            }
+            // The repository is not in the store: there is nothing to confirm.
+            None => Ok(()),
+        }
     }
 
     /// Fetch the commits of a repository, newest first.
@@ -523,6 +593,15 @@ impl Store {
         }))
     }
 
+    /// The number of the rows that were written since the store was opened.
+    ///
+    /// The counter belongs to the connection of SQLite: it counts the rows
+    /// that were inserted, updated or deleted by every statement. It is the
+    /// proof that a poll of a repository that did not move wrote nothing.
+    pub fn total_changes(&self) -> u64 {
+        self.conn.total_changes()
+    }
+
     /// List all runs of a repository, newest first.
     pub fn list_runs(&self, repo_id: i64) -> Result<Vec<Run>> {
         let mut stmt = self.conn.prepare_cached(
@@ -674,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn replacing_commits_upserts_by_sha_and_drops_the_rest() {
+    fn replacing_commits_keeps_the_stored_rows_and_drops_the_rest() {
         let store = Store::open_in_memory().unwrap();
         let repo_id = store.upsert_repo(&repo("a")).unwrap();
         let first = UpstreamCommit {
@@ -704,7 +783,9 @@ mod tests {
             .unwrap();
         assert_eq!(store.list_commits(repo_id).unwrap().len(), 2);
 
-        // The fork moved: the statistics of sha-1 were updated and sha-2 left.
+        // The fork moved: sha-1 is still pending and sha-2 is not. The row of
+        // sha-1 is not written again — a commit is immutable, its diff never
+        // changes — and the row of sha-2 is deleted.
         let updated = UpstreamCommit {
             insertions: 50,
             deletions: 21,
@@ -714,17 +795,51 @@ mod tests {
         let stored = store.list_commits(repo_id).unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].sha, "sha-1");
-        assert_eq!(stored[0].insertions, 50);
-        assert_eq!(stored[0].deletions, 21);
+        assert_eq!(stored[0].insertions, 5);
+        assert_eq!(stored[0].deletions, 2);
 
         // The statistics are served back keyed by SHA, for the incremental
         // listing of the git layer.
         let stats = store.commit_stats(repo_id).unwrap();
         let cached = stats.get("sha-1").expect("sha-1 statistics are cached");
         assert_eq!(cached.files, vec!["a.rs".to_string(), "b.rs".to_string()]);
-        assert_eq!(cached.insertions, 50);
-        assert_eq!(cached.deletions, 21);
+        assert_eq!(cached.insertions, 5);
+        assert_eq!(cached.deletions, 2);
         assert_eq!(store.commit_stats(9999).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn the_address_of_a_stored_commit_follows_the_address_of_the_upstream() {
+        let store = Store::open_in_memory().unwrap();
+        let mut repository = repo("a");
+        repository.upstream_web = "https://old.example.com".to_string();
+        let repo_id = store.upsert_repo(&repository).unwrap();
+        let commit = UpstreamCommit {
+            repo_id,
+            sha: "sha-1".into(),
+            short_sha: "sha-1111".into(),
+            summary: "First".into(),
+            body: String::new(),
+            author: "dev".into(),
+            author_email: "dev@example.com".into(),
+            authored_at: 10,
+            committed_at: 10,
+            files: vec!["a.rs".into()],
+            insertions: 5,
+            deletions: 2,
+            url: "https://old.example.com/commit/sha-1".into(),
+        };
+        store
+            .replace_commits(repo_id, std::slice::from_ref(&commit))
+            .unwrap();
+
+        // The web address of the upstream changed: the address of the commit
+        // is the one thing of a stored commit that can change.
+        repository.upstream_web = "https://new.example.com".to_string();
+        store.upsert_repo(&repository).unwrap();
+        let stored = store.list_commits(repo_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].url, "https://new.example.com/commit/sha-1");
     }
 
     #[test]
@@ -751,11 +866,15 @@ mod tests {
             .unwrap();
 
         // A poll of a repository that did not move writes nothing: the row of
-        // a pending commit is immutable, so it is already correct.
+        // a pending commit is immutable, so it is already correct. The
+        // counter of the writes proves it.
+        let writes = store.total_changes();
         store
             .replace_commits(repo_id, std::slice::from_ref(&commit))
             .unwrap();
+        assert_eq!(store.total_changes(), writes);
         store.replace_commits(repo_id, &[commit]).unwrap();
+        assert_eq!(store.total_changes(), writes);
         let stored = store.list_commits(repo_id).unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].summary, "First");
@@ -766,10 +885,15 @@ mod tests {
             sha: "sha-2".into(),
             ..stored[0].clone()
         };
+        let writes = store.total_changes();
         store
             .replace_commits(repo_id, &[other, stored[0].clone()])
             .unwrap();
         assert_eq!(store.list_commits(repo_id).unwrap().len(), 2);
+        // One row was written for the new commit and one for the number of
+        // the pending commits: the row of the commit that was already stored
+        // was left alone.
+        assert_eq!(store.total_changes(), writes + 2);
 
         // One commit merged into the fork: the set shrinks, so the store
         // writes the row away.

@@ -20,6 +20,7 @@ lives here — the crate is the vocabulary every other crate speaks.
 | Tool | What it does |
 |------|--------------|
 | [`examples/revwalk-probe.rs`](examples/revwalk-probe.rs) | Measures the listing of the missing commits of a real fork: the graph walk, the diff, and the two options of git2 that the dashboard turns off |
+| [`examples/repo-open-probe.rs`](examples/repo-open-probe.rs) | Measures the opening of a repository, the price of one commit of the backlog |
 
 ## Example
 
@@ -39,6 +40,9 @@ ones the toolchain and zig provide.
 | Document | Purpose |
 |----------|---------|
 | [ADR-09](../../docs/adr/ADR-09-commits-are-counted-once.md) | Count every commit once |
+| [ADR-16](../../docs/adr/ADR-16-count-the-lines-of-a-commit-in-one-pass.md) | Count the lines of a commit in one pass |
+| [ADR-17](../../docs/adr/ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed |
+| [ADR-18](../../docs/adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory |
 | [Benchmarks](../../docs/benchmarks/README.md) | The measured latency of the synchronisation |
 | [ADR-06](../../docs/adr/ADR-06-context-fitted-prompts.md) | The context window of the runtime |
 | [Configuration guide](../../docs/guides/02-configuration.md) | Every key of `config.toml`, as read by this crate |

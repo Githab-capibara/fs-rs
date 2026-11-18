@@ -145,17 +145,30 @@ fn bench_pending(c: &mut Criterion) {
         })
     });
     group.bench_function("with known statistics", |b| {
-        b.iter(|| {
-            let commits = git.pending_commits_incremental("main", &known).unwrap();
-            criterion::black_box(commits.len());
+        b.iter_custom(|iterations| {
+            // The statistics are handed over to the listing, which takes them
+            // out of the map. The map is filled again from the result, the
+            // way the dashboard does it between two synchronisations.
+            let mut known = known.clone();
+            let started = Instant::now();
+            for _ in 0..iterations {
+                let commits = git.pending_commits_incremental("main", &mut known).unwrap();
+                known = fsrs_core::git::stats_of_pending(&commits);
+                criterion::black_box(commits.len());
+            }
+            started.elapsed()
         })
     });
     group.bench_function("first listing, empty statistics", |b| {
-        b.iter(|| {
-            let commits = git
-                .pending_commits_incremental("main", &HashMap::new())
-                .unwrap();
-            criterion::black_box(commits.len());
+        b.iter_custom(|iterations| {
+            let started = Instant::now();
+            for _ in 0..iterations {
+                let commits = git
+                    .pending_commits_incremental("main", &mut HashMap::new())
+                    .unwrap();
+                criterion::black_box(commits.len());
+            }
+            started.elapsed()
         })
     });
     group.bench_function("metadata only, no diff", |b| {
@@ -274,8 +287,8 @@ fn bench_replace(c: &mut Criterion) {
     let mut group = c.benchmark_group(format!("replace_commits ({STORED_COMMITS} rows)"));
     group.sample_size(10);
 
-    // Same rows again: the upsert has to detect that nothing changed.
-    group.bench_function("upsert, nothing changed", |b| {
+    // Same rows again: the store has to detect that nothing changed.
+    group.bench_function("the same list", |b| {
         b.iter_custom(|iterations| {
             let started = Instant::now();
             for _ in 0..iterations {
@@ -285,19 +298,54 @@ fn bench_replace(c: &mut Criterion) {
         })
     });
 
-    // Every row carries a new summary, so every row is rewritten either way.
-    group.bench_function("upsert, every row changed", |b| {
+    // One commit more: one row is written, the other rows are left alone.
+    group.bench_function("one commit more", |b| {
+        b.iter_custom(|iterations| {
+            // The rows are built before the clock starts: the benchmark
+            // measures the store, not the allocation of the rows.
+            let rows: Vec<Vec<UpstreamCommit>> = (0..iterations)
+                .map(|iteration| {
+                    let mut rows = commits.clone();
+                    rows.push(commit(1, &format!("added-commit-{iteration:04}")));
+                    rows
+                })
+                .collect();
+            let started = Instant::now();
+            for rows in &rows {
+                store.replace_commits(repo_id, rows).unwrap();
+            }
+            started.elapsed()
+        })
+    });
+
+    // One commit less: one row is written away.
+    group.bench_function("one commit less", |b| {
+        b.iter_custom(|iterations| {
+            let rows: Vec<Vec<UpstreamCommit>> = (0..iterations)
+                .map(|iteration| {
+                    let mut rows = commits.clone();
+                    rows.push(commit(1, &format!("gone-commit-{iteration:04}")));
+                    rows
+                })
+                .collect();
+            let started = Instant::now();
+            for rows in &rows {
+                store.replace_commits(repo_id, rows).unwrap();
+                store.replace_commits(repo_id, &commits).unwrap();
+            }
+            started.elapsed()
+        })
+    });
+
+    // The address of the web page of the upstream changed: the addresses of
+    // the commits follow it, and every row is rewritten.
+    group.bench_function("the address of the upstream changed", |b| {
         b.iter_custom(|iterations| {
             let started = Instant::now();
             for iteration in 0..iterations {
-                let rows: Vec<UpstreamCommit> = commits
-                    .iter()
-                    .map(|commit| UpstreamCommit {
-                        summary: format!("iteration {iteration}"),
-                        ..commit.clone()
-                    })
-                    .collect();
-                store.replace_commits(repo_id, &rows).unwrap();
+                let mut repository = repo_row(1, &fork, &upstream);
+                repository.upstream_web = format!("https://example.com/{iteration}");
+                store.upsert_repo(&repository).unwrap();
             }
             started.elapsed()
         })
@@ -358,18 +406,30 @@ fn bench_sync_end_to_end(c: &mut Criterion) {
     let store = Store::open(&temp.path().join("fsrs.db")).unwrap();
     let repo_id = store.upsert_repo(&repo).unwrap();
 
-    let commits = sync_repo(&repo, &Default::default()).unwrap();
+    let commits = sync_repo(&repo, &mut Default::default()).unwrap();
     assert_eq!(commits.len(), BEHIND);
     store.replace_commits(repo_id, &commits).unwrap();
     let known = store.commit_stats(repo_id).unwrap();
 
     let mut group = c.benchmark_group(format!("sync_repo ({BEHIND} pending)"));
     group.sample_size(10);
+    // The floor of the synchronisation: the repository is opened and the
+    // upstream is fetched, and nothing is listed.
+    group.bench_function("the fetch alone", |b| {
+        b.iter_custom(|iterations| {
+            let started = Instant::now();
+            for _ in 0..iterations {
+                let git = GitRepo::open(&fork).unwrap();
+                git.fetch_upstream("main").unwrap();
+            }
+            started.elapsed()
+        })
+    });
     group.bench_function("cold, nothing known", |b| {
         b.iter_custom(|iterations| {
             let started = Instant::now();
             for _ in 0..iterations {
-                let commits = sync_repo(&repo, &Default::default()).unwrap();
+                let commits = sync_repo(&repo, &mut Default::default()).unwrap();
                 criterion::black_box(commits.len());
             }
             started.elapsed()
@@ -377,12 +437,25 @@ fn bench_sync_end_to_end(c: &mut Criterion) {
     });
     group.bench_function("warm, the statistics are known", |b| {
         b.iter_custom(|iterations| {
+            // The statistics are handed over to the synchronisation, which
+            // takes them out of the map. The map is filled again from the
+            // result, the way the dashboard does it between two polls.
+            let mut known = known.clone();
             let started = Instant::now();
             for _ in 0..iterations {
-                let commits = sync_repo(&repo, &known).unwrap();
+                let commits = sync_repo(&repo, &mut known).unwrap();
+                known = fsrs_core::git::stats_of(&commits);
                 criterion::black_box(commits.len());
             }
             started.elapsed()
+        })
+    });
+    // The path the interface used before: the statistics are read back from
+    // the database before every synchronisation.
+    group.bench_function("the statistics of the store", |b| {
+        b.iter(|| {
+            let stats = store.commit_stats(repo_id).unwrap();
+            criterion::black_box(stats.len());
         })
     });
     group.finish();
