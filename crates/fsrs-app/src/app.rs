@@ -475,13 +475,21 @@ impl FsrsApp {
     // ------------------------------------------------------------------
 
     /// Apply every message the background produced.
-    fn handle_messages(&mut self) {
+    ///
+    /// The answer tells whether the state of the window changed: the window
+    /// asks for a frame when something happened, and not otherwise. A
+    /// message that does not change the number of the tasks that are in
+    /// flight still changes the picture on the screen — the number of the
+    /// slots of the server, for example — and the frame has to be drawn.
+    fn handle_messages(&mut self) -> bool {
+        let mut changed = false;
         for message in self.worker.drain() {
             if self.prepared {
                 // The window shows prepared data; the live state of the
                 // background must not replace it.
                 continue;
             }
+            changed = true;
             match message {
                 WorkerMessage::Synced { repo_id, commits } => self.on_synced(repo_id, commits),
                 WorkerMessage::SyncFailed { repo_id, error } => self.on_sync_failed(repo_id, error),
@@ -514,6 +522,7 @@ impl FsrsApp {
                 WorkerMessage::PipelineFinished { outcome } => self.on_pipeline_finished(outcome),
             }
         }
+        changed
     }
 
     /// The upstream branch was fetched.
@@ -954,7 +963,7 @@ impl eframe::App for FsrsApp {
             );
         }
         let before = self.work_in_flight();
-        self.handle_messages();
+        let changed = self.handle_messages();
         self.dispatch_assessments();
 
         // Every part of the frame is measured on its own: the table of the
@@ -988,7 +997,8 @@ impl eframe::App for FsrsApp {
             // The measurement of the frames needs frames that follow each
             // other.
             ui.ctx().request_repaint();
-        } else if self.work_in_flight() != before {
+        } else if changed || self.work_in_flight() != before {
+            // The background moved forward: the window has to show it.
             ui.ctx().request_repaint();
         } else if self.is_busy() {
             // Busy without new data (the model reads the diff): poll slowly

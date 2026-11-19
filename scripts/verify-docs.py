@@ -198,6 +198,20 @@ check(
     "FSRS_CONTINUOUS_REPAINT" in app and "fn record_frame" in app,
     "the measurement of the frames",
 )
+check(
+    "The window is drawn when something happened, and not while nothing happens",
+    "fn handle_messages(&mut self) -> bool" in app
+    and "changed || self.work_in_flight() != before" in app
+    and "request_repaint_after(std::time::Duration::from_millis(250))" in app,
+    "the decision to ask for a frame",
+)
+gui = read("crates/fsrs-app/tests/gui.rs")
+check(
+    "The tests of the window watch when it asks for a frame",
+    "fn the_window_asks_for_a_frame_only_when_something_happens" in gui
+    and "has_requested_repaint" in gui,
+    "the test of the frames of an idle window",
+)
 
 # --- The state of the window --------------------------------------------
 state = read("crates/fsrs-app/src/state.rs")
@@ -251,6 +265,12 @@ check(
     "idx_runs_repo" in store,
     "the index of the runs",
 )
+check(
+    "The events of a run and the state of the run are written together",
+    "pub fn insert_run_events_with_state" in store
+    and "unchecked_transaction" in store,
+    "the transaction of the events of a run",
+)
 
 # --- The worker -------------------------------------------------------
 worker = read("crates/fsrs-app/src/worker.rs")
@@ -263,6 +283,11 @@ check(
     "The background writes to the database and the window does not",
     "pub fn with_store" in worker and "store: Option<Arc<Mutex<Store>>>" in worker,
     "the connection of the worker",
+)
+check(
+    "The worker writes the events of a run in one batch",
+    "insert_run_events_with_state" in worker and "const BATCH: usize" in worker,
+    "the batch of the events of a run",
 )
 
 # --- The live tests ---------------------------------------------------
@@ -327,6 +352,20 @@ check(
     and "the frames of the window" in read("scripts/measure-frames.sh"),
     "scripts/measure-frames.sh",
 )
+check(
+    "The size of the code of every crate is measured",
+    "cargo llvm-lines" in read("scripts/measure-lines.sh"),
+    "scripts/measure-lines.sh",
+)
+benchmarks = read("docs/benchmarks/README.md")
+check(
+    "The benchmarks hold the measured size of the code of every crate",
+    "| `fsrs-core` | 85 579 |" in benchmarks
+    and "| `fsrs-ai` | 57 229 |" in benchmarks
+    and "| `fsrs-acp` | 225 934 |" in benchmarks
+    and "| `fsrs-app` | 79 033 |" in benchmarks,
+    "the table of the lines of LLVM",
+)
 
 # --- The files of the documentation -----------------------------------
 for relative in (
@@ -351,6 +390,7 @@ for relative in (
     "scripts/measure-startup.py",
     "scripts/measure-sync.sh",
     "scripts/measure-frames.sh",
+    "scripts/measure-lines.sh",
 ):
     path = ROOT / relative
     check(

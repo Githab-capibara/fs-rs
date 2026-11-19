@@ -122,6 +122,18 @@ The measurement and the decision behind it are in
 [ADR-19](docs/adr/ADR-19-draw-only-the-visible-rows.md) and in
 [the benchmarks](docs/benchmarks/README.md).
 
+The window is drawn when something happens and not while nothing happens: a
+frame is asked for when the background moved forward or when the user
+clicked, and an idle window asks for nothing at all.
+
+| Metric | Value |
+|--------|-------|
+| The frames of an idle window | **0** — the processor of the machine is not spun |
+| The poll of a busy window | one frame per 250 ms |
+
+The decision behind it is in
+[ADR-20](docs/adr/ADR-20-redraw-the-window-when-something-happens.md).
+
 ---
 
 ## Build

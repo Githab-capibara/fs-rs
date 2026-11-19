@@ -412,28 +412,74 @@ impl Worker {
     ///
     /// Every event is written to the database on the way: the window shows
     /// the log of the pipeline and does not wait for a write of the disk.
+    ///
+    /// The events that arrive together are written in one transaction, and
+    /// not one transaction per event: the disk is asked to commit once for a
+    /// burst of events. The state of the run is written in the same
+    /// transaction as the events that produced it.
     async fn forward_events(
         sender: &Sender<WorkerMessage>,
         mut receiver: tokio::sync::mpsc::UnboundedReceiver<RunEvent>,
         run_id: i64,
         store: Option<Arc<Mutex<Store>>>,
     ) {
+        /// The number of the events that are written in one transaction.
+        const BATCH: usize = 64;
+
+        let mut batch: Vec<fsrs_core::RunEvent> = Vec::new();
+        let mut state: Option<RunState> = None;
         while let Some(event) = receiver.recv().await {
-            write_to(&store, |store| {
-                store.insert_run_event(&fsrs_core::RunEvent {
-                    run_id,
-                    agent: agent_name(&event).to_string(),
-                    prompt: prompt_of(&event).to_string(),
-                    output: output_of(&event),
-                    created_at: now_unix(),
-                })?;
-                if let Some(state) = run_state_for(&event) {
-                    store.update_run_state(run_id, state)?;
-                }
-                Ok(())
-            });
+            Self::collect_event(&mut batch, &mut state, run_id, &event);
             let _ = sender.send(WorkerMessage::PipelineEvent { event });
+
+            // Everything that is already there is taken too: a burst of the
+            // events of a pipeline is one transaction, and not one
+            // transaction per event.
+            while batch.len() < BATCH {
+                match receiver.try_recv() {
+                    Ok(event) => {
+                        Self::collect_event(&mut batch, &mut state, run_id, &event);
+                        let _ = sender.send(WorkerMessage::PipelineEvent { event });
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            if !batch.is_empty() {
+                write_to(&store, |store| {
+                    store.insert_run_events_with_state(run_id, &batch, state.take())
+                });
+                batch.clear();
+            }
         }
+        // The last events of the pipeline are written when it is over.
+        if !batch.is_empty() {
+            write_to(&store, |store| {
+                store.insert_run_events_with_state(run_id, &batch, state.take())
+            });
+        }
+    }
+
+    /// Put one event of the pipeline into the batch that is written.
+    ///
+    /// The event is remembered in the shape that the database wants, and the
+    /// state of the run is the newest one that the events produced.
+    fn collect_event(
+        batch: &mut Vec<fsrs_core::RunEvent>,
+        state: &mut Option<RunState>,
+        run_id: i64,
+        event: &RunEvent,
+    ) {
+        if let Some(new_state) = run_state_for(event) {
+            *state = Some(new_state);
+        }
+        batch.push(fsrs_core::RunEvent {
+            run_id,
+            agent: agent_name(event).to_string(),
+            prompt: prompt_of(event).to_string(),
+            output: output_of(event),
+            created_at: now_unix(),
+        });
     }
 }
 
@@ -726,5 +772,90 @@ mod tests {
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].sha, commits[0].sha);
         assert_eq!(stored[0].summary, "Second");
+    }
+
+    /// The events of a run reach the database, and the state of the run is
+    /// written with them.
+    ///
+    /// The events arrive one by one, but a burst of them belongs to one
+    /// transaction: the disk is asked to commit once for the whole batch, and
+    /// not once for every event.
+    #[test]
+    fn the_events_of_the_run_are_written_in_one_batch() {
+        let temp = tempfile::tempdir().unwrap();
+        let database = temp.path().join("fsrs.db");
+        let store = Store::open(&database).expect("the database");
+        let repo_id = store
+            .upsert_repo(&Repo {
+                id: 0,
+                name: "demo".to_string(),
+                path: std::path::PathBuf::from("/tmp/demo"),
+                upstream_url: String::new(),
+                upstream_web: String::new(),
+                main_branch: "main".to_string(),
+                pending_commits: 0,
+                last_fetched_at: None,
+            })
+            .expect("the repository");
+        let run_id = store
+            .insert_run(&fsrs_core::Run {
+                id: 0,
+                repo_id,
+                sha: "abc12345".to_string(),
+                branch: "fsrs/implement/abc12345".to_string(),
+                state: RunState::Prepared,
+                cycles: 0,
+                model: "mock/model".to_string(),
+                created_at: now_unix(),
+                updated_at: now_unix(),
+            })
+            .expect("the run");
+
+        // Three events of the pipeline, and the channel is closed after them.
+        let (events, receiver) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
+        events
+            .send(RunEvent::Started {
+                sha: "abc12345".to_string(),
+                branch: "fsrs/implement/abc12345".to_string(),
+                model: "mock/model".to_string(),
+            })
+            .expect("the event");
+        events
+            .send(RunEvent::PromptSent {
+                role: fsrs_acp::AgentRole::Implementer,
+                prompt: "implement it".to_string(),
+            })
+            .expect("the event");
+        events
+            .send(RunEvent::AgentMessage {
+                role: fsrs_acp::AgentRole::Implementer,
+                text: "done".to_string(),
+            })
+            .expect("the event");
+        drop(events);
+
+        let store = Some(Arc::new(Mutex::new(store)));
+        let (sender, _receiver) = channel();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("the runtime");
+        runtime.block_on(Worker::forward_events(
+            &sender,
+            receiver,
+            run_id,
+            store.clone(),
+        ));
+
+        // Every event of the run is in the database, and the state of the run
+        // is the one that the events produced.
+        let store = store.as_ref().expect("the store").lock().unwrap();
+        let written = store.list_run_events(run_id).expect("the events");
+        assert_eq!(written.len(), 3);
+        assert_eq!(written[0].agent, "pipeline");
+        assert_eq!(written[1].agent, "implementer");
+        assert_eq!(written[1].prompt, "implement it");
+        assert_eq!(written[2].output, "done");
+        let run = store.run(run_id).expect("the run").expect("the run");
+        assert_eq!(run.state, RunState::Implementing);
     }
 }

@@ -168,6 +168,14 @@ struct FakeFoq {
 impl FakeFoq {
     /// Start the server on a free port of the loopback interface.
     fn start() -> Self {
+        Self::start_with_delay(Duration::ZERO)
+    }
+
+    /// Start the server that waits `delay` before it answers.
+    ///
+    /// The slow stand-in lets a test watch the window while the background
+    /// of the dashboard is still busy.
+    fn start_with_delay(delay: Duration) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("binding the stand-in");
         let port = listener
             .local_addr()
@@ -182,7 +190,7 @@ impl FakeFoq {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
-                let _ = answer_decision(stream);
+                let _ = answer_decision(stream, delay);
             }
         });
 
@@ -211,7 +219,10 @@ impl Drop for FakeFoq {
 }
 
 /// Answer one request of the stand-in with the log-probabilities of `C`.
-fn answer_decision(mut stream: TcpStream) -> std::io::Result<()> {
+///
+/// The answer waits `delay` first: a slow server keeps the background of
+/// the dashboard busy while a test watches the window.
+fn answer_decision(mut stream: TcpStream, delay: Duration) -> std::io::Result<()> {
     use std::io::{BufRead, BufReader, Read, Write};
 
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -239,6 +250,10 @@ fn answer_decision(mut stream: TcpStream) -> std::io::Result<()> {
     if length > 0 {
         let mut body = vec![0_u8; length];
         reader.read_exact(&mut body)?;
+    }
+
+    if !delay.is_zero() {
+        std::thread::sleep(delay);
     }
 
     // The letters of the two scales, with `C` far in the front.
@@ -301,6 +316,26 @@ fn fixture() -> Fixture {
     let upstream = make_upstream(temp.path());
     let fork = make_fork(temp.path(), &upstream);
     let foq = FakeFoq::start();
+    let config_path = temp.path().join("config.toml");
+
+    Fixture {
+        _temp: temp,
+        upstream,
+        fork,
+        foq,
+        config_path,
+    }
+}
+
+/// Build the fixture whose decision model answers slowly.
+///
+/// The background of the dashboard stays busy while the test watches the
+/// window: the rating of the commit is in flight for a while.
+fn fixture_with_slow_model(delay: Duration) -> Fixture {
+    let temp = tempfile::tempdir().expect("the temporary directory");
+    let upstream = make_upstream(temp.path());
+    let fork = make_fork(temp.path(), &upstream);
+    let foq = FakeFoq::start_with_delay(delay);
     let config_path = temp.path().join("config.toml");
 
     Fixture {
@@ -521,6 +556,64 @@ fn the_table_of_the_commits_draws_only_the_visible_rows() {
     assert!(
         harness.query_by_label("Commit 200").is_none(),
         "the newest commit should be forgotten after the scroll"
+    );
+}
+
+/// The window asks for a frame when something happens, and only then.
+///
+/// The dashboard draws a frame when the background moved forward, when the
+/// user clicked, or when the terminal produced output. A window that asked
+/// for a frame in every pass would spin the processor of the machine while
+/// the user reads the log — the idle cost of the dashboard has to be zero.
+#[test]
+fn the_window_asks_for_a_frame_only_when_something_happens() {
+    // The decision model answers slowly, so the background of the dashboard
+    // is busy while the test watches the window.
+    let fixture = fixture_with_slow_model(Duration::from_millis(1500));
+    let mut harness = window(&fixture);
+
+    // While the background works, the window keeps itself alive: it asks for
+    // a frame, and it does not ask for the next one before the poll is due.
+    let mut polling = false;
+    let mut arrived = false;
+    for _ in 0..300 {
+        harness.step();
+        if harness.ctx.has_requested_repaint() {
+            polling = true;
+        }
+        if harness
+            .state()
+            .repos()
+            .first()
+            .is_some_and(|view| view.commits().len() == 1)
+        {
+            arrived = true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+        if arrived && polling {
+            break;
+        }
+    }
+    assert!(arrived, "the missing commits should arrive");
+    assert!(
+        polling,
+        "the window should ask for a frame while the background works"
+    );
+
+    // And when nothing changes any more, it asks for nothing: the processor
+    // of the machine is not spun while the user reads the log.
+    let mut idle = false;
+    for _ in 0..600 {
+        harness.step();
+        if !harness.ctx.has_requested_repaint() {
+            idle = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        idle,
+        "the window should not ask for a frame when nothing changed"
     );
 }
 

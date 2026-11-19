@@ -239,6 +239,64 @@ The absolute numbers depend on the accelerator and on the state of the model
 in the cache. The distribution and the shape of the latency are the parts that
 matter.
 
+# Benchmark of the size of the code
+
+The size of a binary says how much of the machine a program loads, but it does
+not say where the program spends its time. The tool that answers the second
+question counts the lines of the intermediate representation of LLVM that
+every function produced:
+
+```bash
+scripts/measure-lines.sh
+```
+
+The number is not the number of lines of the source: a generic function of a
+dependency is counted once for every type that it was made for, and the
+monomorphisation of the protocol of the agents is counted twenty-two times.
+
+## The numbers
+
+The numbers were measured on the same machine and with the same compiler as
+the rest of the document:
+
+| Crate | The lines of LLVM | The functions |
+|-------|-------------------|---------------|
+| `fsrs-core` | 85 579 | 2 849 |
+| `fsrs-ai` | 57 229 | 1 579 |
+| `fsrs-acp` | 225 934 | 6 037 |
+| `fsrs-app` | 79 033 | 2 665 |
+
+## The biggest functions
+
+| Crate | The function | The lines of LLVM |
+|-------|-------------|-------------------|
+| `fsrs-core` | the closure that reads the rows of `Store::list_commits` | 793 |
+| `fsrs-core` | `Store::repo` | 522 |
+| `fsrs-core` | `Store::replace_commits` | 498 |
+| `fsrs-ai` | `prompt::build_context` | 401 |
+| `fsrs-ai` | `assess_commit` | 333 |
+| `fsrs-acp` | the dispatcher of the JSON-RPC of the SDK | 2 507 (× 22) |
+| `fsrs-app` | the body of `Worker::run_pipeline` | 801 |
+| `fsrs-app` | `Worker::sync_repo` | 596 |
+| `fsrs-app` | `FsrsApp::load_repositories` | 595 |
+| `fsrs-app` | `TerminalPanel::spawn` | 542 |
+
+## What the numbers say
+
+* **The code of the dashboard is small.** The biggest function of `fsrs-app`
+  is the body of the pipeline — 801 lines of LLVM for a function that runs
+  three agents in turn — and the drawing of a frame is 327.
+* **The protocol of the agents is the biggest part of the program.** The
+  dispatcher of the JSON-RPC of the SDK is 2 507 lines of LLVM, and it is
+  made twenty-two times, once for every kind of request and every kind of
+  answer. Two thirds of the code of `fsrs-acp` is the SDK, and it is not the
+  code of the dashboard.
+* **The biggest functions of the dashboard are the ones that wait.** The
+  listing of the commits, the loading of the repositories and the start of
+  the terminal are the functions that call into `git2` and into the system —
+  their size is the size of the code around the call, and the time of the
+  call is not in the program at all.
+
 # Benchmark of the synchronisation of a fork
 
 The second measurement is the work the dashboard does before the model is
@@ -411,6 +469,20 @@ The slowest frame of every run is the one that paid for something else — the
 first frame after the window appeared, the layout of the fonts, or the
 scheduling of the machine. It is reported, because a tail that is visible is
 better than a tail that is hidden.
+
+## The eighth wave against the seventh
+
+The eighth wave changed the way the window is drawn, and not the way it is
+painted. The two binaries were measured one after the other, on the same
+machine, against the same fork — three pairs of runs of two runs each:
+
+| Binary | The median of the frame | The median of the table |
+|--------|-------------------------|------------------------|
+| The seventh wave | 145–153 µs | 68–78 µs |
+| The eighth wave | 145–157 µs | 68–82 µs |
+
+The numbers are the same: the eighth wave asks for a frame when something
+happened, and it does not make the frame more expensive.
 
 See [ADR-19](../adr/ADR-19-draw-only-the-visible-rows.md).
 

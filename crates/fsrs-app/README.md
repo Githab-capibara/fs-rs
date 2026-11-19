@@ -43,6 +43,10 @@ write of SQLite waits for the disk, and the window of the dashboard must not
 wait for the disk — the write of the worker is a message that the window
 reads, not a pause of the window.
 
+The events of a run arrive in bursts, and the worker writes a burst in one
+transaction: the state of the run is written with the events that produced
+it, so that the two can never be out of step.
+
 The worker holds one client of the local decision model and shares it with
 every rating, so the connection to the server, the size of its window and the
 prompts it already fitted are reused instead of asked again for every commit.
@@ -84,6 +88,23 @@ The numbers of that measurement are in
 them is in
 [ADR-19](../../docs/adr/ADR-19-draw-only-the-visible-rows.md).
 
+## When the window is drawn
+
+The window asks for a frame when something happened, and for nothing while
+nothing happens: the background moved forward, the user clicked, or the
+terminal produced output. A window that drew itself in a loop would keep the
+processor of the machine busy while the reader watches a pipeline that takes
+minutes.
+
+A busy window polls slowly — after 250 ms — and a quiet window is quiet. The
+test `the_window_asks_for_a_frame_only_when_something_happens` of
+[`tests/gui.rs`](tests/gui.rs) watches a window whose decision model answers
+slowly: the window asks for frames while the rating is in flight, and it asks
+for nothing once the rating is over.
+
+The decision behind it is in
+[ADR-20](../../docs/adr/ADR-20-redraw-the-window-when-something-happens.md).
+
 ## Related documents
 
 | Document | Purpose |
@@ -95,5 +116,7 @@ them is in
 | [ADR-13](../../docs/adr/ADR-13-rate-the-commits-one-at-a-time.md) | Why the ratings never outnumber the slots of the decision server |
 | [ADR-18](../../docs/adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Why the worker keeps the statistics of the commits |
 | [ADR-19](../../docs/adr/ADR-19-draw-only-the-visible-rows.md) | Why only the visible rows of the table are drawn |
+| [ADR-20](../../docs/adr/ADR-20-redraw-the-window-when-something-happens.md) | Why the window is drawn only when something happens |
+| [ADR-21](../../docs/adr/ADR-21-write-the-events-of-a-run-in-one-transaction.md) | Why the events of a run are written in one transaction |
 | [Design note — the dashboard layout](../../docs/design/01-dashboard-layout.md) | The window, the threads, the picker, the screenshot |
 | [Getting started](../../docs/guides/01-getting-started.md) | The first run of the dashboard |

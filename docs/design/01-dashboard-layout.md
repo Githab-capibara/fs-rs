@@ -63,10 +63,23 @@ connection of the UI thread avoids both a lock and a pool.
 The background holds a connection of its own to the same database and writes
 the commits, the ratings, the events of the run and the state of the run. A
 write of SQLite waits for the disk, and the window of the dashboard must not
-wait for the disk.
+wait for the disk. The events of a run arrive in bursts, and a burst is
+written in one transaction together with the state that it produced — see
+[ADR-21](../adr/ADR-21-write-the-events-of-a-run-in-one-transaction.md).
 
 The rating queue is limited to two requests in flight, because the decision
 model is a single process on a single GPU.
+
+## When the window is drawn
+
+egui draws a frame when something asks for it. The dashboard asks for one
+when the state of the window changed — a message of the background was
+applied, or the number of the tasks that are in flight changed — and it asks
+for a frame after 250 ms while it waits for something. When nothing happens,
+the window asks for nothing at all, and the processor of the machine is not
+spun while the reader watches a long pipeline.
+
+See [ADR-20](../adr/ADR-20-redraw-the-window-when-something-happens.md).
 
 ## The model picker
 
@@ -118,6 +131,8 @@ ignored — otherwise a failed synchronisation would empty the picture again.
   result into `main`,
 * the picker offers the models of the mock agent,
 * the commits are rated by a stand-in for the decision model,
+* the window asks for a frame while the background works and asks for
+  nothing when the background is quiet,
 * the window survives an agent that cannot be started.
 
 The tests use `harness.step()` and never `harness.run()`: the app asks for a

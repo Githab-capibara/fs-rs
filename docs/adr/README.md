@@ -23,6 +23,8 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-17](ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed | Accepted |
 | [ADR-18](ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory | Accepted |
 | [ADR-19](ADR-19-draw-only-the-visible-rows.md) | Draw only the visible rows of the table of the commits | Accepted |
+| [ADR-20](ADR-20-redraw-the-window-when-something-happens.md) | Redraw the window when something happens | Accepted |
+| [ADR-21](ADR-21-write-the-events-of-a-run-in-one-transaction.md) | Write the events of a run in one transaction | Accepted |
 
 ## How to read an ADR
 

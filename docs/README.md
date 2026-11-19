@@ -42,6 +42,8 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-17](adr/ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed |
 | [ADR-18](adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory |
 | [ADR-19](adr/ADR-19-draw-only-the-visible-rows.md) | Draw only the visible rows of the table of the commits |
+| [ADR-20](adr/ADR-20-redraw-the-window-when-something-happens.md) | Redraw the window when something happens |
+| [ADR-21](adr/ADR-21-write-the-events-of-a-run-in-one-transaction.md) | Write the events of a run in one transaction |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |

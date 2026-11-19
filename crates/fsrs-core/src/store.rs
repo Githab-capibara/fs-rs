@@ -643,7 +643,26 @@ impl Store {
     /// the interface handles several of them at once: one transaction for the
     /// batch instead of one commit per event.
     pub fn insert_run_events(&self, events: &[RunEvent]) -> Result<()> {
-        if events.is_empty() {
+        let Some(run_id) = events.first().map(|event| event.run_id) else {
+            return Ok(());
+        };
+        self.insert_run_events_with_state(run_id, events, None)
+    }
+
+    /// Record a batch of pipeline events and the state of the run inside one
+    /// transaction.
+    ///
+    /// The events of a pipeline and the state that they produced belong
+    /// together: one transaction writes both of them, so that the state of the
+    /// run and the events that explain it can never be out of step. The disk
+    /// is asked to commit once for the whole batch, and not once per event.
+    pub fn insert_run_events_with_state(
+        &self,
+        run_id: i64,
+        events: &[RunEvent],
+        state: Option<RunState>,
+    ) -> Result<()> {
+        if events.is_empty() && state.is_none() {
             return Ok(());
         }
         let tx = self.conn.unchecked_transaction()?;
@@ -659,6 +678,12 @@ impl Store {
                     event.output,
                     event.created_at,
                 ])?;
+            }
+            if let Some(state) = state {
+                tx.execute(
+                    "UPDATE runs SET state = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![run_id, state.as_str(), now_unix()],
+                )?;
             }
         }
         tx.commit()?;
@@ -944,6 +969,55 @@ mod tests {
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].prompt, "one");
         assert_eq!(loaded[1].agent, "verifier");
+    }
+
+    /// The events of a run and the state of the run are written together.
+    ///
+    /// The state and the events that produced it belong to one transaction:
+    /// they can never be out of step, and the disk is asked to commit once
+    /// for the whole batch.
+    #[test]
+    fn the_events_and_the_state_of_a_run_are_written_together() {
+        let store = Store::open_in_memory().unwrap();
+        let repo_id = store.upsert_repo(&repo("a")).unwrap();
+        let run_id = store
+            .insert_run(&Run {
+                id: 0,
+                repo_id,
+                sha: "abc".into(),
+                branch: "fsrs/implement/abc".into(),
+                state: RunState::Prepared,
+                cycles: 0,
+                model: "opencode/gpt-5".into(),
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        let events = vec![RunEvent {
+            run_id,
+            agent: "reviewer".into(),
+            prompt: "review it".into(),
+            output: "out".into(),
+            created_at: 2,
+        }];
+        store
+            .insert_run_events_with_state(run_id, &events, Some(RunState::Reviewing))
+            .unwrap();
+
+        // The events are there, and the state of the run is the one that was
+        // written with them.
+        let loaded = store.list_run_events(run_id).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].prompt, "review it");
+        let run = store.run(run_id).unwrap().unwrap();
+        assert_eq!(run.state, RunState::Reviewing);
+
+        // A batch without events and without a state writes nothing.
+        let before = store.total_changes();
+        store
+            .insert_run_events_with_state(run_id, &[], None)
+            .unwrap();
+        assert_eq!(store.total_changes(), before);
     }
 
     #[test]
