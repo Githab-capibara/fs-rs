@@ -350,6 +350,70 @@ the time of the listing because they make the diff cheaper.
 
 See [ADR-12](../adr/ADR-12-read-the-objects-as-fast-as-git-can.md).
 
+# Benchmark of the frames of the window
+
+The window is drawn again and again while the pipeline runs, and the table of
+the commits is the part of it that grows with the size of the backlog. The
+question this measurement answers is: what does one frame cost when the fork
+is 1450 commits behind its upstream?
+
+The measurement is the one of the program itself — it times every part of
+every frame and writes the median, the ninety-fifth percentile and the
+slowest frame of the last 512 frames to its log. The script opens the
+dashboard against a real fork and reads the numbers out:
+
+```bash
+cargo build --release -p fsrs-app --bin fsrs
+scripts/measure-frames.sh target/release/fsrs /tmp/opencode/fd-fork 5
+```
+
+The frames have to follow each other, otherwise the program draws a frame
+only when something changes and the measurement is of the frames that the
+pipeline happened to cause. The environment variable `FSRS_CONTINUOUS_REPAINT`
+asks the window for a frame after every one it has drawn.
+
+## The fixture
+
+| Parameter | Value |
+|-----------|-------|
+| Repository | the fork of `sharkdp/fd`, 1450 commits behind its upstream |
+| Window | 1400 × 860 points |
+| The commits that are shown | 1450 |
+| The runs | 5, the median of the medians is the result |
+
+## The numbers
+
+The "before" column is the sixth wave, measured the same way against the same
+fork.
+
+| Measurement | Before | After |
+|-------------|--------|-------|
+| The whole frame, the median | 13 485–14 024 µs | **144–182 µs** |
+| The whole frame, the ninety-fifth percentile | — | 256–285 µs |
+| The whole frame, the slowest | — | 8 960–22 237 µs |
+| The table of the commits, the median | 13 422–13 878 µs | **70–86 µs** |
+| The header, the median | — | 30–33 µs |
+| The strip of the repositories, the median | — | 36–41 µs |
+| The log of the pipeline, the median | — | 11–12 µs |
+
+The frame is **about eighty times faster**, and the table of it **about a
+hundred and seventy times faster**. The reason is the virtualisation of the
+table: only the rows that are visible are laid out and painted, and the rows
+that the reader does not see cost nothing.
+
+The parts that are left are the ones that cannot be cheaper: the header draws
+a heading and a few labels, and the strip of the repositories draws a card
+for every repository. They are borrowed, not copied — the texts of the header
+and of the strip are read out of the state, and they are not rebuilt in every
+frame.
+
+The slowest frame of every run is the one that paid for something else — the
+first frame after the window appeared, the layout of the fonts, or the
+scheduling of the machine. It is reported, because a tail that is visible is
+better than a tail that is hidden.
+
+See [ADR-19](../adr/ADR-19-draw-only-the-visible-rows.md).
+
 # Benchmark of the slots of the decision server
 
 The ratings of the backlog could be evaluated in parallel, but the server of

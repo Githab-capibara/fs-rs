@@ -5,7 +5,7 @@
 | [Architecture Decision Records](adr/README.md) | The decisions that shape `fs-rs`, and the reasons behind them |
 | [Design notes](design/README.md) | How the dashboard, the pipeline and the decision model are built |
 | [Guides](guides/README.md) | Getting started, configuration, the local decision model |
-| [Benchmarks](benchmarks/README.md) | The measured numbers of the local decision model |
+| [Benchmarks](benchmarks/README.md) | The measured numbers of the local decision model, of the synchronisation and of the frames |
 | [Images](images/) | The architecture diagram and the charts of the reports |
 
 ## The project
@@ -41,13 +41,14 @@ local model, and ports them into the fork with a three-agent pipeline.
 | [ADR-16](adr/ADR-16-count-the-lines-of-a-commit-in-one-pass.md) | Count the lines of a commit in one pass |
 | [ADR-17](adr/ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed |
 | [ADR-18](adr/ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory |
+| [ADR-19](adr/ADR-19-draw-only-the-visible-rows.md) | Draw only the visible rows of the table of the commits |
 | [Design 01](design/01-dashboard-layout.md) | The layout of the window, the threads, the model picker |
 | [Design 02](design/02-three-agent-pipeline.md) | The implement → review → verify cycle, the branch, the merge |
 | [Design 03](design/03-local-decision-model.md) | The schemas, the prompt, the calibration, the window |
 | [Getting started](guides/01-getting-started.md) | The first run of the dashboard |
 | [Configuration](guides/02-configuration.md) | Every key of `config.toml` |
 | [The local decision model](guides/03-local-decision-model.md) | The runtime, the GPU, the calibration |
-| [Benchmarks](benchmarks/README.md) | The decision model and the synchronisation, measured |
+| [Benchmarks](benchmarks/README.md) | The decision model, the synchronisation and the frames of the window, measured |
 
 ## The verification of this documentation
 

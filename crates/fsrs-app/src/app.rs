@@ -23,8 +23,8 @@ use fsrs_core::{
 };
 
 use crate::state::{
-    ModelPicker, PickerIntent, PipelineLog, RepoView, agent_name, complexity_color,
-    criticality_color, format_time, output_of, plural, prompt_of, run_state_for,
+    ModelPicker, PickerIntent, PipelineLog, RepoView, complexity_color, criticality_color, plural,
+    run_state_for,
 };
 use crate::terminal::TerminalPanel;
 use crate::worker::{FoqSettings, Worker, WorkerMessage};
@@ -46,6 +46,90 @@ pub fn process_started() -> Instant {
 /// The decision model is a single process on a single GPU, so the dashboard
 /// keeps the queue short instead of flooding it with requests.
 const MAX_CONCURRENT_ASSESSMENTS: usize = 2;
+
+/// The parts of a frame that are measured separately.
+///
+/// The order is the order in which the parts are drawn.
+const FRAME_PARTS: usize = 6;
+
+/// The height of one row of the table of the commits.
+///
+/// The rows of the table are drawn in a fixed height, so that the list can
+/// be scrolled without knowing the height of every row: the list of the
+/// pending commits of a fork is long, and only the rows that are visible are
+/// drawn.
+const ROW_HEIGHT: f32 = 46.0;
+
+/// The height of the row of the names of the columns.
+const HEADER_HEIGHT: f32 = 20.0;
+
+/// The width of the column of a badge.
+///
+/// The column is wide enough for the name of the column itself, so that the
+/// name stands above the badge.
+const BADGE_COLUMN: f32 = 92.0;
+
+/// The width of the column of the button.
+const ACTION_COLUMN: f32 = 140.0;
+
+/// The widths of the columns of the table of the commits.
+///
+/// The header of the table and its rows use the same widths, so that the
+/// names of the columns stand above the columns themselves.
+#[derive(Debug, Clone, Copy)]
+struct CommitColumns {
+    /// The column of the criticality.
+    criticality: f32,
+    /// The column of the description.
+    description: f32,
+    /// The column of the complexity.
+    complexity: f32,
+    /// The column of the button.
+    action: f32,
+    /// The gap between the columns.
+    spacing: f32,
+}
+
+impl CommitColumns {
+    /// The whole width of the table.
+    fn total(self) -> f32 {
+        self.criticality + self.description + self.complexity + self.action + self.spacing * 3.0
+    }
+}
+
+/// Compute the widths of the columns of the table of the commits.
+///
+/// The description takes the rest of the width of the window, and never less
+/// than a hundred and twenty points: a narrow window still shows the text of
+/// the commit. The gaps between the columns are counted, so that the table
+/// fits the window exactly and does not widen it.
+fn commit_columns(ui: &egui::Ui, width: f32) -> CommitColumns {
+    let spacing = ui.spacing().item_spacing.x;
+    let fixed = BADGE_COLUMN * 2.0 + ACTION_COLUMN + spacing * 3.0;
+    CommitColumns {
+        criticality: BADGE_COLUMN,
+        description: (width - fixed).max(120.0),
+        complexity: BADGE_COLUMN,
+        action: ACTION_COLUMN,
+        spacing,
+    }
+}
+
+/// Draw the name of one column of the table of the commits.
+///
+/// The column keeps the width it was given, even when the name of it is
+/// narrower: the names of the columns have to stand above the very columns
+/// of the rows.
+fn commit_column(ui: &mut egui::Ui, width: f32, name: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, HEADER_HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(width);
+            ui.label(egui::RichText::new(name).strong());
+        },
+    );
+}
 
 /// The number of the ratings that may be in flight at the same time.
 ///
@@ -103,8 +187,11 @@ enum Action {
 pub struct FsrsApp {
     /// The configuration of the user.
     config: Config,
-    /// Where the configuration was read from.
-    config_path: PathBuf,
+    /// The address of the configuration, ready to be shown.
+    ///
+    /// The address is shown in the header of the window in every frame, and
+    /// it does not change while the program runs.
+    config_label: String,
     /// The persistent state.
     store: Store,
     /// The background executor.
@@ -135,8 +222,6 @@ pub struct FsrsApp {
     run_state: Option<RunState>,
     /// The commits that still wait for their assessment.
     assessment_queue: VecDeque<(usize, String)>,
-    /// The pipeline events of the current frame, waiting for one transaction.
-    pending_events: Vec<fsrs_core::RunEvent>,
     /// The assessments that are currently running.
     assessment_in_flight: usize,
     /// The number of the slots of the decision server.
@@ -162,6 +247,28 @@ pub struct FsrsApp {
     started: Instant,
     /// Whether the first frame was already drawn.
     first_frame_drawn: bool,
+    /// The times of the last frames, in microseconds.
+    ///
+    /// The time of a frame is what the user feels: the window is drawn again
+    /// and again while the pipeline runs, and every one of those frames costs
+    /// the processor. The times of the last frames are kept, so that the cost
+    /// of the window can be measured instead of guessed.
+    frame_times: VecDeque<u64>,
+    /// The time of every part of the last frames, in microseconds.
+    ///
+    /// The parts are the header, the list of the repositories, the terminal,
+    /// the log, the table of the commits and the dialog of the model. The
+    /// time of every part is measured separately, so that the expensive one
+    /// is known instead of guessed.
+    frame_parts: VecDeque<[u64; FRAME_PARTS]>,
+    /// How many frames were drawn since the program started.
+    frames_drawn: u64,
+    /// Whether the window asks for a new frame as soon as it is ready.
+    ///
+    /// The program draws a frame only when something changed. The
+    /// measurement of the frames needs frames that follow each other, so the
+    /// environment variable `FSRS_CONTINUOUS_REPAINT` turns this on.
+    continuous_repaint: bool,
 }
 
 impl FsrsApp {
@@ -193,7 +300,7 @@ impl FsrsApp {
     ) -> Self {
         let mut app = Self {
             config,
-            config_path,
+            config_label: config_path.display().to_string(),
             store,
             worker,
             repos: Vec::new(),
@@ -209,7 +316,6 @@ impl FsrsApp {
             run_id: None,
             run_state: None,
             assessment_queue: VecDeque::new(),
-            pending_events: Vec::new(),
             assessment_in_flight: 0,
             assessment_slots: 1,
             status: String::new(),
@@ -217,6 +323,10 @@ impl FsrsApp {
             prepared: false,
             started: process_started(),
             first_frame_drawn: false,
+            frame_times: VecDeque::new(),
+            frame_parts: VecDeque::new(),
+            frames_drawn: 0,
+            continuous_repaint: std::env::var_os("FSRS_CONTINUOUS_REPAINT").is_some(),
         };
         app.load_repositories();
         if discovery {
@@ -327,18 +437,18 @@ impl FsrsApp {
             };
             let mut view = RepoView::new(Repo { id, ..repo });
             if let Ok(commits) = self.store.list_commits(id) {
-                view.commits = commits;
+                view.set_commits(commits);
             }
             if let Ok(assessments) = self.store.list_assessments(id) {
                 for assessment in assessments {
-                    view.assessments.insert(assessment.sha.clone(), assessment);
+                    view.insert_assessment(assessment);
                 }
             }
             view.syncing = true;
             // The statistics of the commits are read out of the commits that
             // were just loaded: the database is not asked for them a second
             // time.
-            known.push(fsrs_core::git::stats_of(&view.commits));
+            known.push(fsrs_core::git::stats_of(view.commits()));
             views.push(view);
         }
 
@@ -404,13 +514,6 @@ impl FsrsApp {
                 WorkerMessage::PipelineFinished { outcome } => self.on_pipeline_finished(outcome),
             }
         }
-        // The pipeline events of a frame are written in one transaction.
-        let batch = std::mem::take(&mut self.pending_events);
-        if !batch.is_empty()
-            && let Err(error) = self.store.insert_run_events(&batch)
-        {
-            self.error = Some(format!("журнал реализации: {error}"));
-        }
     }
 
     /// The upstream branch was fetched.
@@ -422,26 +525,19 @@ impl FsrsApp {
             let view = &mut self.repos[index];
             view.syncing = false;
             view.error = None;
-            view.commits = commits;
+            view.set_commits(commits);
         }
-        let commits = self.repos[index].commits.clone();
-        if let Err(error) = self.store.replace_commits(repo_id, &commits) {
-            self.error = Some(format!("сохранение коммитов: {error}"));
-        }
+        let count = self.repos[index].commits().len();
         let mut pending = Vec::new();
-        for commit in &commits {
-            if !self.repos[index].assessments.contains_key(&commit.sha) {
+        for commit in self.repos[index].commits() {
+            if self.repos[index].assessment(&commit.sha).is_none() {
                 pending.push(commit.sha.clone());
             }
         }
         for sha in pending {
             self.assessment_queue.push_back((index, sha));
         }
-        self.status = format!(
-            "{}: обновлений {}",
-            self.repos[index].repo.name,
-            commits.len()
-        );
+        self.status = format!("{}: обновлений {}", self.repos[index].repo.name, count);
     }
 
     /// The synchronisation failed.
@@ -475,13 +571,15 @@ impl FsrsApp {
         let Some(view) = self.repos.get_mut(index) else {
             return;
         };
-        view.commits.clear();
-        view.assessments.clear();
+        view.clear();
         view.syncing = false;
         // The prepared data replaces the result of the synchronisation, so the
         // error of the failed attempt is not shown any more.
         view.error = None;
         self.error = None;
+        let repo_id = view.repo.id;
+        let mut commits = Vec::with_capacity(rows.len());
+        let mut assessments = Vec::with_capacity(rows.len());
         for (number, row) in rows.iter().enumerate() {
             // The object ids of the real commits, so that the picture looks
             // like the window of a real repository.
@@ -494,8 +592,8 @@ impl FsrsApp {
             ];
             let sha = SEEDS[number % SEEDS.len()].to_string();
             let short_sha = sha[..8].to_string();
-            view.commits.push(UpstreamCommit {
-                repo_id: view.repo.id,
+            commits.push(UpstreamCommit {
+                repo_id,
                 sha: sha.clone(),
                 short_sha: short_sha.clone(),
                 summary: row.summary.clone(),
@@ -513,27 +611,31 @@ impl FsrsApp {
                 deletions: 17,
                 url: format!("https://example.com/commit/{sha}"),
             });
-            view.assessments.insert(
-                sha.clone(),
-                Assessment {
-                    repo_id: view.repo.id,
-                    sha,
-                    criticality: row.criticality,
-                    complexity: row.complexity,
-                    criticality_confidence: 0.46,
-                    complexity_confidence: 0.48,
-                    needs_review: true,
-                    rationale: String::new(),
-                    model: "foq".to_string(),
-                    created_at: 1_762_280_000,
-                },
-            );
+            assessments.push(Assessment {
+                repo_id,
+                sha,
+                criticality: row.criticality,
+                complexity: row.complexity,
+                criticality_confidence: 0.46,
+                complexity_confidence: 0.48,
+                needs_review: true,
+                rationale: String::new(),
+                model: "foq".to_string(),
+                created_at: 1_762_280_000,
+            });
+        }
+        view.set_commits(commits);
+        for assessment in assessments {
+            view.insert_assessment(assessment);
         }
         view.repo.pending_commits = rows.len() as i64;
         self.status = format!("обновлений: {}", rows.len());
     }
 
     /// The local model rated one commit.
+    ///
+    /// The assessment is written to the database by the background, which
+    /// produced it: the window does not wait for a write of the disk.
     fn on_assessed(&mut self, assessment: fsrs_core::Assessment) {
         self.assessment_in_flight = self.assessment_in_flight.saturating_sub(1);
         if let Some(view) = self
@@ -541,11 +643,7 @@ impl FsrsApp {
             .iter_mut()
             .find(|view| view.repo.id == assessment.repo_id)
         {
-            view.assessments
-                .insert(assessment.sha.clone(), assessment.clone());
-        }
-        if let Err(error) = self.store.upsert_assessment(&assessment) {
-            self.error = Some(format!("сохранение оценки: {error}"));
+            view.insert_assessment(assessment);
         }
     }
 
@@ -553,19 +651,9 @@ impl FsrsApp {
     fn on_pipeline_event(&mut self, event: fsrs_acp::RunEvent) {
         self.log.push(PipelineLog::new(now_unix(), event.clone()));
 
-        if let Some(run_id) = self.run_id
-            && let Some(state) = run_state_for(&event)
-        {
+        if let Some(state) = run_state_for(&event) {
             self.run_state = Some(state);
-            let _ = self.store.update_run_state(run_id, state);
         }
-        self.pending_events.push(fsrs_core::RunEvent {
-            run_id: self.run_id.unwrap_or_default(),
-            agent: agent_name(&event).to_string(),
-            prompt: prompt_of(&event).to_string(),
-            output: output_of(&event),
-            created_at: now_unix(),
-        });
     }
 
     /// The pipeline finished.
@@ -573,9 +661,6 @@ impl FsrsApp {
         match outcome {
             Ok(result) => {
                 self.run_state = Some(RunState::Merged);
-                if let Some(run_id) = self.run_id {
-                    let _ = self.store.update_run_state(run_id, RunState::Merged);
-                }
                 self.status = format!(
                     "реализация завершена: {} → {} ({})",
                     result.branch,
@@ -586,9 +671,6 @@ impl FsrsApp {
             }
             Err(error) => {
                 self.run_state = Some(RunState::Failed);
-                if let Some(run_id) = self.run_id {
-                    let _ = self.store.update_run_state(run_id, RunState::Failed);
-                }
                 self.error = Some(format!("реализация не удалась: {error}"));
             }
         }
@@ -615,15 +697,13 @@ impl FsrsApp {
             let Some(view) = self.repos.get(index) else {
                 continue;
             };
-            if view.assessments.contains_key(&sha) {
+            if view.assessment(&sha).is_some() {
                 continue;
             }
-            let Some(commit) = view
-                .commits
-                .iter()
-                .find(|commit| commit.sha == sha)
-                .cloned()
-            else {
+            // The commit is found by its position, and not by a search
+            // through the list: the list of the pending commits is long, and
+            // every commit of it is looked up once.
+            let Some(commit) = view.commit(&sha).cloned() else {
                 continue;
             };
             let path = view.repo.path.clone();
@@ -698,8 +778,8 @@ impl FsrsApp {
             }
             Action::AssessAll(index) => {
                 if let Some(view) = self.repos.get(index) {
-                    for commit in &view.commits {
-                        if !view.assessments.contains_key(&commit.sha) {
+                    for commit in view.commits() {
+                        if view.assessment(&commit.sha).is_none() {
                             self.assessment_queue.push_back((index, commit.sha.clone()));
                         }
                     }
@@ -766,12 +846,7 @@ impl FsrsApp {
         let Some(view) = self.repos.get(repo) else {
             return;
         };
-        let Some(commit) = view
-            .commits
-            .iter()
-            .find(|commit| commit.sha == sha)
-            .cloned()
-        else {
+        let Some(commit) = view.commit(sha).cloned() else {
             return;
         };
         let tracked = view.repo.clone();
@@ -796,16 +871,17 @@ impl FsrsApp {
             created_at: now_unix(),
             updated_at: now_unix(),
         };
-        match self.store.insert_run(&run) {
+        let run_id = match self.store.insert_run(&run) {
             Ok(id) => {
                 self.run_id = Some(id);
                 self.run_state = Some(RunState::Prepared);
+                id
             }
             Err(error) => {
                 self.error = Some(format!("запуск не сохранён: {error}"));
                 return;
             }
-        }
+        };
 
         self.log.clear();
         self.status = format!(
@@ -814,7 +890,7 @@ impl FsrsApp {
             request.branch
         );
         self.error = None;
-        self.worker.run_pipeline(request);
+        self.worker.run_pipeline(request, run_id);
     }
 }
 
@@ -823,6 +899,39 @@ pub fn split_command(command: &str) -> (String, Vec<String>) {
     let mut parts = command.split_whitespace();
     let program = parts.next().unwrap_or("opencode").to_string();
     (program, parts.map(str::to_string).collect())
+}
+
+/// The label of the model the user picked.
+///
+/// The label is borrowed from the list of the models, so that the header of
+/// the window does not copy it in every frame.
+fn model_label<'a>(models: &'a [ModelChoice], selected: Option<&'a str>) -> &'a str {
+    let Some(id) = selected else {
+        return "не выбрана";
+    };
+    models
+        .iter()
+        .find(|model| model.id == id)
+        .map(|model| model.label())
+        .unwrap_or(id)
+}
+
+/// The label of the state of the last run.
+///
+/// The label is a constant of the program, so that the header of the window
+/// does not format the state in every frame.
+fn run_state_label(state: Option<RunState>) -> &'static str {
+    match state {
+        None => "—",
+        Some(RunState::Prepared) => "Prepared",
+        Some(RunState::Implementing) => "Implementing",
+        Some(RunState::Reviewing) => "Reviewing",
+        Some(RunState::Verifying) => "Verifying",
+        Some(RunState::Rework) => "Rework",
+        Some(RunState::Approved) => "Approved",
+        Some(RunState::Merged) => "Merged",
+        Some(RunState::Failed) => "Failed",
+    }
 }
 
 /// The short form of a commit id.
@@ -836,6 +945,7 @@ fn short_sha(sha: &str) -> String {
 
 impl eframe::App for FsrsApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let started = Instant::now();
         if !self.first_frame_drawn {
             self.first_frame_drawn = true;
             tracing::info!(
@@ -847,18 +957,38 @@ impl eframe::App for FsrsApp {
         self.handle_messages();
         self.dispatch_assessments();
 
+        // Every part of the frame is measured on its own: the table of the
+        // commits is the part that grows with the size of the backlog, and the
+        // numbers say where the time of a frame goes.
+        let mut parts = [0u64; FRAME_PARTS];
+        let mark = Instant::now();
         self.header(ui);
+        parts[0] = mark.elapsed().as_micros() as u64;
+        let mark = Instant::now();
         self.repository_strip(ui);
+        parts[1] = mark.elapsed().as_micros() as u64;
+        let mark = Instant::now();
         self.terminal_panel(ui);
+        parts[2] = mark.elapsed().as_micros() as u64;
+        let mark = Instant::now();
         self.log_panel(ui);
+        parts[3] = mark.elapsed().as_micros() as u64;
+        let mark = Instant::now();
         self.commit_table(ui);
+        parts[4] = mark.elapsed().as_micros() as u64;
+        let mark = Instant::now();
         self.model_picker(ui.ctx());
+        parts[5] = mark.elapsed().as_micros() as u64;
 
         // A frame is drawn only when something changed: the background moved
         // forward, the user clicked, or the terminal produced output (the
         // terminal widget asks for its own frames). While the dashboard is
         // idle the CPU is not spun at all.
-        if self.work_in_flight() != before {
+        if self.continuous_repaint {
+            // The measurement of the frames needs frames that follow each
+            // other.
+            ui.ctx().request_repaint();
+        } else if self.work_in_flight() != before {
             ui.ctx().request_repaint();
         } else if self.is_busy() {
             // Busy without new data (the model reads the diff): poll slowly
@@ -866,6 +996,7 @@ impl eframe::App for FsrsApp {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(250));
         }
+        self.record_frame(started.elapsed(), parts);
     }
 }
 
@@ -876,6 +1007,62 @@ impl FsrsApp {
             || !self.assessment_queue.is_empty()
             || self.repos.iter().any(|view| view.syncing)
             || self.run_state.is_some_and(RunState::is_active)
+    }
+
+    /// Remember how long the frame took and report it.
+    ///
+    /// The times of the last frames are kept, and every few hundred frames
+    /// the median, the ninety-fifth percentile and the slowest frame are
+    /// written to the log. The number of the frames and the number of the
+    /// commits that are shown are in the same line, so the cost of a frame
+    /// can be read together with the work it did.
+    ///
+    /// The time of every part of the frame is reported with it: the part that
+    /// takes the time is the one that has to be made cheaper.
+    fn record_frame(&mut self, elapsed: std::time::Duration, parts: [u64; FRAME_PARTS]) {
+        const WINDOW: usize = 512;
+        const REPORT_EVERY: u64 = 256;
+
+        self.frames_drawn += 1;
+        self.frame_times.push_back(elapsed.as_micros() as u64);
+        self.frame_parts.push_back(parts);
+        while self.frame_times.len() > WINDOW {
+            self.frame_times.pop_front();
+            self.frame_parts.pop_front();
+        }
+        if !self.frames_drawn.is_multiple_of(REPORT_EVERY) {
+            return;
+        }
+        let mut times: Vec<u64> = self.frame_times.iter().copied().collect();
+        times.sort_unstable();
+        let median = times[times.len() / 2];
+        let p95 = times[times.len() * 95 / 100];
+        let slowest = times[times.len() - 1];
+        // The median of every part of the frame.
+        let mut parts_median = [0u64; FRAME_PARTS];
+        for (index, part) in parts_median.iter_mut().enumerate() {
+            let mut values: Vec<u64> = self.frame_parts.iter().map(|parts| parts[index]).collect();
+            values.sort_unstable();
+            *part = values[values.len() / 2];
+        }
+        let commits = self
+            .selected_repo
+            .and_then(|index| self.repos.get(index))
+            .map_or(0, |view| view.commits().len());
+        tracing::info!(
+            frames = self.frames_drawn,
+            commits,
+            median_us = median,
+            p95_us = p95,
+            max_us = slowest,
+            header_us = parts_median[0],
+            repositories_us = parts_median[1],
+            terminal_us = parts_median[2],
+            log_us = parts_median[3],
+            commits_us = parts_median[4],
+            picker_us = parts_median[5],
+            "the frames of the window"
+        );
     }
 
     /// A number that changes whenever the background state of the window moves.
@@ -892,15 +1079,24 @@ impl FsrsApp {
     }
 
     /// The header of the window.
+    ///
+    /// The texts of the header are borrowed, and not copied: the header is
+    /// drawn in every frame, and a copy of the status and of the address of
+    /// the configuration is an allocation in every frame.
     fn header(&mut self, ui: &mut egui::Ui) {
-        let model = self.selected_model_label();
-        let status = self.status.clone();
-        let error = self.error.clone();
-        let run = self
-            .run_state
-            .map(|state| format!("{state:?}"))
-            .unwrap_or_else(|| "—".to_string());
-        let config_path = self.config_path.display().to_string();
+        let FsrsApp {
+            status,
+            error,
+            run_state,
+            models,
+            selected_model,
+            config_label,
+            ..
+        } = self;
+        let model = model_label(models, selected_model.as_deref());
+        let run = run_state_label(*run_state);
+        let status = status.as_str();
+        let config_label = config_label.as_str();
 
         egui::Panel::top("header").exact_size(34.0).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -912,7 +1108,7 @@ impl FsrsApp {
                 ui.separator();
                 ui.label(status);
                 ui.separator();
-                ui.label(egui::RichText::new(config_path).small().weak().monospace());
+                ui.label(egui::RichText::new(config_label).small().weak().monospace());
                 if let Some(error) = error {
                     ui.colored_label(egui::Color32::from_rgb(220, 90, 80), error);
                 }
@@ -920,35 +1116,31 @@ impl FsrsApp {
         });
     }
 
-    /// The label of the model the user picked.
-    fn selected_model_label(&self) -> String {
-        let Some(id) = self.selected_model.as_deref() else {
-            return "не выбрана".to_string();
-        };
-        self.models
-            .iter()
-            .find(|model| model.id == id)
-            .map(|model| model.label().to_string())
-            .unwrap_or_else(|| id.to_string())
-    }
-
     /// The central list of the tracked repositories.
+    ///
+    /// The names and the addresses of the repositories are borrowed, and not
+    /// copied: the strip is drawn in every frame, and a copy of the address
+    /// of every repository is an allocation in every frame.
     fn repository_strip(&mut self, ui: &mut egui::Ui) {
         let mut action: Option<Action> = None;
+        let FsrsApp {
+            repos,
+            selected_repo,
+            ..
+        } = self;
 
         egui::Panel::top("repositories")
             .exact_size(104.0)
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        for (index, view) in self.repos.iter().enumerate() {
-                            let selected = self.selected_repo == Some(index);
-                            let name = view.repo.name.clone();
-                            let path = view.repo.path.to_string_lossy().to_string();
+                        for (index, view) in repos.iter().enumerate() {
+                            let selected = *selected_repo == Some(index);
+                            let name = &view.repo.name;
+                            let path = view.repo.path.to_string_lossy();
                             let pending = view.pending();
                             let unassessed = view.unassessed();
                             let syncing = view.syncing;
-                            let error = view.error.clone();
 
                             egui::Frame::group(ui.style())
                                 .inner_margin(8.0)
@@ -957,13 +1149,18 @@ impl FsrsApp {
                                     if ui
                                         .selectable_label(
                                             selected,
-                                            egui::RichText::new(&name).strong().size(15.0),
+                                            egui::RichText::new(name).strong().size(15.0),
                                         )
                                         .clicked()
                                     {
                                         action = Some(Action::SelectRepo(index));
                                     }
-                                    ui.label(egui::RichText::new(path).small().weak().monospace());
+                                    ui.label(
+                                        egui::RichText::new(path.as_ref())
+                                            .small()
+                                            .weak()
+                                            .monospace(),
+                                    );
                                     ui.horizontal(|ui| {
                                         if syncing {
                                             ui.spinner();
@@ -990,7 +1187,7 @@ impl FsrsApp {
                                             );
                                         }
                                     });
-                                    if let Some(error) = error {
+                                    if let Some(error) = &view.error {
                                         ui.label(
                                             egui::RichText::new(error)
                                                 .small()
@@ -1007,7 +1204,7 @@ impl FsrsApp {
                                     });
                                 });
                         }
-                        if self.repos.is_empty() {
+                        if repos.is_empty() {
                             ui.label(
                                 egui::RichText::new(
                                     "Нет репозиториев. Добавьте их в ~/.config/fs-rs/config.toml",
@@ -1076,22 +1273,12 @@ impl FsrsApp {
     }
 
     /// The log of the pipeline.
+    ///
+    /// The strings of every line are built when the event arrives, so the
+    /// panel only draws them.
     fn log_panel(&mut self, ui: &mut egui::Ui) {
-        let entries: Vec<(String, String, String, String)> = self
-            .log
-            .iter()
-            .map(|entry| {
-                (
-                    format_time(entry.at),
-                    entry
-                        .role()
-                        .map(|role| role.label().to_string())
-                        .unwrap_or_else(|| "pipeline".to_string()),
-                    entry.summary(),
-                    prompt_of(&entry.event).to_string(),
-                )
-            })
-            .collect();
+        let FsrsApp { log, run_state, .. } = self;
+        let count = log.len();
 
         egui::Panel::bottom("log")
             .resizable(true)
@@ -1099,25 +1286,25 @@ impl FsrsApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Журнал реализации");
-                    if let Some(state) = self.run_state {
+                    if let Some(state) = run_state {
                         ui.label(format!("{state:?}"));
                     }
-                    ui.label(format!("событий: {}", entries.len()));
+                    ui.label(format!("событий: {count}"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (time, role, summary, mut prompt) in entries {
+                    for entry in log.iter_mut() {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(time).small().monospace().weak());
-                            ui.label(egui::RichText::new(role).strong());
-                            ui.label(summary);
+                            ui.label(egui::RichText::new(entry.time()).small().monospace().weak());
+                            ui.label(egui::RichText::new(entry.role_label()).strong());
+                            ui.label(entry.summary());
                         });
-                        if !prompt.is_empty() {
+                        if !entry.prompt().is_empty() {
                             egui::CollapsingHeader::new("Видимый промпт")
                                 .default_open(false)
                                 .show(ui, |ui| {
                                     ui.add(
-                                        egui::TextEdit::multiline(&mut prompt)
+                                        egui::TextEdit::multiline(entry.prompt_mut())
                                             .desired_width(f32::INFINITY)
                                             .font(egui::TextStyle::Monospace)
                                             .interactive(true),
@@ -1131,6 +1318,10 @@ impl FsrsApp {
     }
 
     /// The list of the upstream commits of the selected repository.
+    ///
+    /// The table draws only the rows that are visible: a fork that is behind
+    /// its upstream by a thousand commits has a thousand rows, and the window
+    /// draws them again and again while the pipeline runs.
     fn commit_table(&mut self, ui: &mut egui::Ui) {
         let mut actions: Vec<Action> = Vec::new();
 
@@ -1143,8 +1334,8 @@ impl FsrsApp {
             return;
         };
 
-        let title = self.repos[index].repo.name.clone();
-        let count = self.repos[index].commits.len();
+        let title = &self.repos[index].repo.name;
+        let count = self.repos[index].commits().len();
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1152,115 +1343,159 @@ impl FsrsApp {
             });
             ui.separator();
 
-            if self.repos[index].commits.is_empty() {
+            if count == 0 {
                 ui.label(egui::RichText::new("Нет новых коммитов").weak());
                 return;
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let view = &self.repos[index];
-                egui::Grid::new("commits")
-                    .num_columns(4)
-                    .striped(true)
-                    .spacing([16.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(egui::RichText::new("Критичность").strong());
-                        ui.label(egui::RichText::new("Описание").strong());
-                        ui.label(egui::RichText::new("Сложность").strong());
-                        ui.label(egui::RichText::new("Действие").strong());
-                        ui.end_row();
+            // The names of the columns stay above the list, so that the reader
+            // knows what the columns mean while the list is scrolled. They
+            // stand above the very columns of the rows, so the two use the
+            // same widths.
+            let columns = commit_columns(ui, ui.available_width());
+            self.commit_header(ui, columns);
+            ui.separator();
 
-                        for commit in &view.commits {
-                            let selected =
-                                self.selected_commit.as_deref() == Some(commit.sha.as_str());
-                            let assessment = view.assessment(&commit.sha);
-
-                            // The criticality of the commit, on the left.
-                            match assessment {
-                                Some(assessment) => {
-                                    badge(
-                                        ui,
-                                        assessment.criticality.badge(),
-                                        criticality_color(assessment.criticality),
-                                    );
-                                }
-                                None => {
-                                    ui.label(egui::RichText::new("…").weak());
-                                }
-                            }
-
-                            // The description of the commit.
-                            ui.vertical(|ui| {
-                                if ui
-                                    .selectable_label(
-                                        selected,
-                                        egui::RichText::new(&commit.summary).strong(),
-                                    )
-                                    .clicked()
-                                {
-                                    actions.push(Action::OpenTerminal {
-                                        repo: index,
-                                        sha: commit.sha.clone(),
-                                    });
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} · {} · +{} −{}",
-                                            commit.author,
-                                            commit.short_sha,
-                                            commit.insertions,
-                                            commit.deletions
-                                        ))
-                                        .small()
-                                        .weak()
-                                        .monospace(),
-                                    );
-                                    if !commit.files.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new(plural(
-                                                commit.files.len(),
-                                                "файл",
-                                                "файла",
-                                                "файлов",
-                                            ))
-                                            .small()
-                                            .weak(),
-                                        );
-                                    }
-                                });
-                            });
-
-                            // The estimated complexity, on the right.
-                            match assessment {
-                                Some(assessment) => {
-                                    badge(
-                                        ui,
-                                        assessment.complexity.badge(),
-                                        complexity_color(assessment.complexity),
-                                    );
-                                }
-                                None => {
-                                    ui.label(egui::RichText::new("…").weak());
-                                }
-                            }
-
-                            // The button that starts the implementation.
-                            if ui.button("РЕАЛИЗОВАТЬ").clicked() {
-                                actions.push(Action::Implement {
-                                    repo: index,
-                                    sha: commit.sha.clone(),
-                                });
-                            }
-                            ui.end_row();
-                        }
-                    });
+            let scroll = egui::ScrollArea::vertical();
+            scroll.show_rows(ui, ROW_HEIGHT, count, |ui, rows| {
+                for position in rows {
+                    self.commit_row(ui, index, position, &mut actions);
+                }
             });
         });
 
         for action in actions {
             self.apply(action);
         }
+    }
+
+    /// Draw the names of the columns of the table of the commits.
+    ///
+    /// The names stand above the very columns of the rows, so the header and
+    /// the rows use the same widths and the same gaps.
+    fn commit_header(&self, ui: &mut egui::Ui, columns: CommitColumns) {
+        ui.allocate_ui_with_layout(
+            egui::vec2(columns.total(), HEADER_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                commit_column(ui, columns.criticality, "Критичность");
+                commit_column(ui, columns.description, "Описание");
+                commit_column(ui, columns.complexity, "Сложность");
+                commit_column(ui, columns.action, "Действие");
+            },
+        );
+    }
+
+    /// Draw one row of the table of the commits.
+    ///
+    /// The row is drawn in a fixed height, so that the list of the rows can
+    /// be scrolled without knowing the height of every one of them.
+    fn commit_row(
+        &self,
+        ui: &mut egui::Ui,
+        repo: usize,
+        position: usize,
+        actions: &mut Vec<Action>,
+    ) {
+        let view = &self.repos[repo];
+        let Some(commit) = view.commits().get(position) else {
+            return;
+        };
+        let row = view.row(position);
+        let assessment = view.assessment(&commit.sha);
+        let selected = self.selected_commit.as_deref() == Some(commit.sha.as_str());
+        let width = ui.available_width();
+        let columns = commit_columns(ui, width);
+
+        ui.allocate_ui_with_layout(
+            egui::vec2(columns.total(), ROW_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                // The criticality of the commit, on the left.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(columns.criticality, ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(columns.criticality);
+                        match assessment {
+                            Some(assessment) => {
+                                badge(
+                                    ui,
+                                    assessment.criticality.badge(),
+                                    criticality_color(assessment.criticality),
+                                );
+                            }
+                            None => {
+                                ui.label(egui::RichText::new("…").weak());
+                            }
+                        }
+                    },
+                );
+
+                // The description of the commit.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(columns.description, ROW_HEIGHT),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_min_width(columns.description);
+                        if ui
+                            .selectable_label(
+                                selected,
+                                egui::RichText::new(&commit.summary).strong(),
+                            )
+                            .clicked()
+                        {
+                            actions.push(Action::OpenTerminal {
+                                repo,
+                                sha: commit.sha.clone(),
+                            });
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&row.detail).small().weak().monospace());
+                            if let Some(files) = &row.files {
+                                ui.label(egui::RichText::new(files).small().weak());
+                            }
+                        });
+                    },
+                );
+
+                // The estimated complexity, on the right.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(columns.complexity, ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(columns.complexity);
+                        match assessment {
+                            Some(assessment) => {
+                                badge(
+                                    ui,
+                                    assessment.complexity.badge(),
+                                    complexity_color(assessment.complexity),
+                                );
+                            }
+                            None => {
+                                ui.label(egui::RichText::new("…").weak());
+                            }
+                        }
+                    },
+                );
+
+                // The button that starts the implementation.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(columns.action, ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(columns.action);
+                        if ui.button("РЕАЛИЗОВАТЬ").clicked() {
+                            actions.push(Action::Implement {
+                                repo,
+                                sha: commit.sha.clone(),
+                            });
+                        }
+                    },
+                );
+            },
+        );
     }
 
     /// The dialog that asks the user for a model.
@@ -1302,7 +1537,8 @@ impl FsrsApp {
                             if filtered.is_empty() {
                                 ui.label(egui::RichText::new("Ничего не найдено").weak());
                             }
-                            for model in filtered {
+                            for position in filtered.iter() {
+                                let model = &models[*position];
                                 let selected =
                                     picker.selected.as_deref() == Some(model.id.as_str());
                                 let label = format!("{}  ·  {}", model.label(), model.id);

@@ -183,6 +183,31 @@ check(
     "#[global_allocator]" in main and "mimalloc::MiMalloc" in main,
     "the allocator of the program",
 )
+check(
+    "The table of the commits draws only the rows that are visible",
+    "show_rows" in app and "const ROW_HEIGHT: f32" in app,
+    "the virtualisation of the table",
+)
+check(
+    "The header of the columns and the rows share the same widths",
+    "fn commit_columns" in app and "fn commit_header" in app,
+    "the widths of the columns of the table",
+)
+check(
+    "The frames of the window are measured",
+    "FSRS_CONTINUOUS_REPAINT" in app and "fn record_frame" in app,
+    "the measurement of the frames",
+)
+
+# --- The state of the window --------------------------------------------
+state = read("crates/fsrs-app/src/state.rs")
+check(
+    "The state of the window keeps what it derives",
+    "pub struct CommitRow" in state
+    and "Arc<[usize]>" in state
+    and "struct Filtered" in state,
+    "the rows of the commits, the filter of the picker and the lines of the log",
+)
 
 # --- The git layer ----------------------------------------------------
 git = read("crates/fsrs-core/src/git.rs")
@@ -233,6 +258,11 @@ check(
     "The worker keeps the statistics of the commits in memory",
     "known: Arc<Mutex<HashMap<i64, HashMap<String, CommitStats>>>>" in worker,
     "the cache of the statistics",
+)
+check(
+    "The background writes to the database and the window does not",
+    "pub fn with_store" in worker and "store: Option<Arc<Mutex<Store>>>" in worker,
+    "the connection of the worker",
 )
 
 # --- The live tests ---------------------------------------------------
@@ -291,6 +321,12 @@ check(
     "sync finished" in read("scripts/measure-sync.sh"),
     "scripts/measure-sync.sh",
 )
+check(
+    "The frames of the window are measured against a real fork",
+    "FSRS_CONTINUOUS_REPAINT" in read("scripts/measure-frames.sh")
+    and "the frames of the window" in read("scripts/measure-frames.sh"),
+    "scripts/measure-frames.sh",
+)
 
 # --- The files of the documentation -----------------------------------
 for relative in (
@@ -314,6 +350,7 @@ for relative in (
     "scripts/record-bolt-profile.sh",
     "scripts/measure-startup.py",
     "scripts/measure-sync.sh",
+    "scripts/measure-frames.sh",
 ):
     path = ROOT / relative
     check(

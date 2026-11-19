@@ -34,19 +34,36 @@ the end of the row. The criticality and the complexity are shown as a letter
 and a badge, because the space of a column is small and the badge carries the
 colour.
 
+The names of the columns are drawn in a header of their own, above the list.
+The header and the rows share one computation of the widths of the columns —
+`commit_columns` — so that the names stand above the very columns they name.
+
+The rows are **virtualised**. The backlog of a fork grows without a bound, and
+the window does not: the rows live in a `egui::ScrollArea` that is asked for
+the rows of the window alone, and a row has a fixed height, so the scroll
+area knows where every row is without asking for its content. The rows that
+the reader does not see cost nothing — see
+[ADR-19](../adr/ADR-19-draw-only-the-visible-rows.md).
+
 ## Threads
 
 The interface must never block. Fetching an upstream repository takes
 seconds, a rating of a commit takes seconds, and the pipeline takes minutes.
 Therefore:
 
-* the egui window, the store and the terminal live on the **UI thread**,
+* the egui window, the terminal and the read of the database live on the
+  **UI thread**,
 * everything else runs on a **Tokio runtime** with two worker threads,
 * the background sends `WorkerMessage`s through a channel, and the interface
   drains the channel once per frame.
 
-The store is a `rusqlite` connection, which is not `Sync`. Keeping it on the UI
-thread avoids both a lock and a pool.
+The store is a `rusqlite` connection, which is not `Sync`. Keeping the
+connection of the UI thread avoids both a lock and a pool.
+
+The background holds a connection of its own to the same database and writes
+the commits, the ratings, the events of the run and the state of the run. A
+write of SQLite waits for the disk, and the window of the dashboard must not
+wait for the disk.
 
 The rating queue is limited to two requests in flight, because the decision
 model is a single process on a single GPU.
@@ -94,6 +111,8 @@ ignored — otherwise a failed synchronisation would empty the picture again.
 
 * the repository strip and the table show the tracked repository and its
   missing commits,
+* the table of two hundred commits draws only the rows that are visible, and
+  the rest of them appear when the list is scrolled,
 * clicking a commit opens the model picker,
 * `РЕАЛИЗОВАТЬ` runs the whole pipeline against the mock agent and merges the
   result into `main`,
@@ -103,6 +122,21 @@ ignored — otherwise a failed synchronisation would empty the picture again.
 
 The tests use `harness.step()` and never `harness.run()`: the app asks for a
 repaint, and `run()` stops after four steps with a panic.
+
+## The cost of a frame
+
+The program times every part of every frame and writes the median, the
+ninety-fifth percentile and the slowest frame of the last 512 frames to its
+log. The environment variable `FSRS_CONTINUOUS_REPAINT` asks the window for a
+frame after every one it has drawn, so that the measurement is of the steady
+state and not of the frames that the pipeline happened to cause:
+
+```bash
+scripts/measure-frames.sh target/release/fsrs /tmp/opencode/fd-fork 5
+```
+
+The numbers of that measurement are in
+[the benchmarks](../benchmarks/README.md).
 
 ## The language of the window
 

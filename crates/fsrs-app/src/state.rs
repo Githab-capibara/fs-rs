@@ -4,6 +4,7 @@
 //! tested without starting a graphical interface.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use fsrs_acp::{AgentRole, ModelChoice, RunEvent};
 use fsrs_core::{Assessment, Repo, RunState, UpstreamCommit};
@@ -55,15 +56,44 @@ pub fn plural(count: usize, one: &str, few: &str, many: &str) -> String {
     format!("{count} {form}")
 }
 
+/// One prepared row of the table of the commits.
+///
+/// The strings of a row are built when the list of the commits changes, and
+/// not when the row is drawn: the window draws the table again and again,
+/// and a row that is built every time costs an allocation per line.
+#[derive(Debug, Clone)]
+pub struct CommitRow {
+    /// The line under the description: the author, the short object id and
+    /// the number of the lines that the commit adds and removes.
+    pub detail: String,
+    /// The number of the files of the commit, when it touches any.
+    pub files: Option<String>,
+}
+
 /// One repository of the central list.
+///
+/// The view keeps three things that the window would otherwise build again
+/// for every frame: the position of every commit, the strings of every row
+/// of the table, and the number of the commits that wait for their
+/// assessment. They are built when the list of the commits changes.
 #[derive(Debug, Clone)]
 pub struct RepoView {
     /// The stored repository.
     pub repo: Repo,
     /// The upstream commits that are missing from the fork.
-    pub commits: Vec<UpstreamCommit>,
+    commits: Vec<UpstreamCommit>,
     /// The assessments of those commits, by commit id.
-    pub assessments: HashMap<String, Assessment>,
+    assessments: HashMap<String, Assessment>,
+    /// The position of every commit, by its object id.
+    ///
+    /// The lookup of a commit by its object id is asked for every commit that
+    /// is rated and for every commit that is implemented, and the list of the
+    /// commits is long.
+    positions: HashMap<String, usize>,
+    /// The prepared rows of the table.
+    rows: Vec<CommitRow>,
+    /// The number of the commits that wait for their assessment.
+    unassessed: usize,
     /// Whether a synchronisation is currently running.
     pub syncing: bool,
     /// The last error of this repository.
@@ -77,14 +107,87 @@ impl RepoView {
             repo,
             commits: Vec::new(),
             assessments: HashMap::new(),
+            positions: HashMap::new(),
+            rows: Vec::new(),
+            unassessed: 0,
             syncing: false,
             error: None,
         }
     }
 
+    /// The upstream commits that are missing from the fork.
+    pub fn commits(&self) -> &[UpstreamCommit] {
+        &self.commits
+    }
+
+    /// The prepared row of the table at the given position.
+    pub fn row(&self, index: usize) -> &CommitRow {
+        &self.rows[index]
+    }
+
+    /// The commit with the given object id.
+    pub fn commit(&self, sha: &str) -> Option<&UpstreamCommit> {
+        self.positions
+            .get(sha)
+            .and_then(|index| self.commits.get(*index))
+    }
+
     /// The assessment of one commit, when it is already known.
     pub fn assessment(&self, sha: &str) -> Option<&Assessment> {
         self.assessments.get(sha)
+    }
+
+    /// The assessments of the commits, by commit id.
+    pub fn assessments(&self) -> &HashMap<String, Assessment> {
+        &self.assessments
+    }
+
+    /// Replace the list of the missing commits.
+    ///
+    /// The position of every commit, the strings of every row of the table
+    /// and the number of the commits that wait for their assessment are built
+    /// here, once, and not again for every frame.
+    pub fn set_commits(&mut self, commits: Vec<UpstreamCommit>) {
+        self.positions.clear();
+        self.rows.clear();
+        self.rows.reserve(commits.len());
+        for (index, commit) in commits.iter().enumerate() {
+            self.positions.insert(commit.sha.clone(), index);
+            self.rows.push(CommitRow {
+                detail: format!(
+                    "{} · {} · +{} −{}",
+                    commit.author, commit.short_sha, commit.insertions, commit.deletions
+                ),
+                files: (!commit.files.is_empty())
+                    .then(|| plural(commit.files.len(), "файл", "файла", "файлов")),
+            });
+        }
+        self.unassessed = commits
+            .iter()
+            .filter(|commit| !self.assessments.contains_key(&commit.sha))
+            .count();
+        self.commits = commits;
+    }
+
+    /// Remember the assessment of one commit.
+    ///
+    /// The number of the commits that wait for their assessment falls by one
+    /// when the commit was not rated yet.
+    pub fn insert_assessment(&mut self, assessment: Assessment) {
+        let known = self.assessments.contains_key(&assessment.sha);
+        if !known && self.positions.contains_key(&assessment.sha) {
+            self.unassessed = self.unassessed.saturating_sub(1);
+        }
+        self.assessments.insert(assessment.sha.clone(), assessment);
+    }
+
+    /// Forget the commits and the assessments of the repository.
+    pub fn clear(&mut self) {
+        self.commits.clear();
+        self.assessments.clear();
+        self.positions.clear();
+        self.rows.clear();
+        self.unassessed = 0;
     }
 
     /// The number of upstream commits that are still missing.
@@ -94,10 +197,7 @@ impl RepoView {
 
     /// The number of commits that still wait for an assessment.
     pub fn unassessed(&self) -> usize {
-        self.commits
-            .iter()
-            .filter(|commit| !self.assessments.contains_key(&commit.sha))
-            .count()
+        self.unassessed
     }
 }
 
@@ -114,6 +214,24 @@ pub struct ModelPicker {
     pub loading: bool,
     /// The error of the last attempt to load the model list.
     pub error: Option<String>,
+    /// The result of the last filter.
+    ///
+    /// The dialog is drawn in every frame, and the filter of every model of
+    /// the list is computed in every frame. The result is kept, and it is
+    /// built again when the text of the user or the list of the models
+    /// changes.
+    filtered: Option<Filtered>,
+}
+
+/// The result of the filter of the model list.
+#[derive(Debug, Clone)]
+struct Filtered {
+    /// The text of the user that produced the result.
+    filter: String,
+    /// The number of the models that were filtered.
+    models: usize,
+    /// The positions of the models that match.
+    positions: Arc<[usize]>,
 }
 
 impl ModelPicker {
@@ -125,22 +243,56 @@ impl ModelPicker {
             selected,
             loading: true,
             error: None,
+            filtered: None,
         }
     }
 
-    /// The models that match the search text of the user.
-    pub fn filtered<'a>(&self, models: &'a [ModelChoice]) -> Vec<&'a ModelChoice> {
-        let needle = self.filter.trim().to_lowercase();
-        models
-            .iter()
-            .filter(|model| {
-                if needle.is_empty() {
-                    return true;
-                }
-                model.id.to_lowercase().contains(&needle)
-                    || model.name.to_lowercase().contains(&needle)
-            })
-            .collect()
+    /// The positions of the models that match the search text of the user.
+    ///
+    /// The result is kept until the text of the user or the list of the
+    /// models changes. The result is handed out as a shared slice, so that
+    /// the dialog can use it and change the choice of the user at the same
+    /// time.
+    pub fn filtered(&mut self, models: &[ModelChoice]) -> Arc<[usize]> {
+        let stale = self
+            .filtered
+            .as_ref()
+            .is_none_or(|cached| cached.filter != self.filter || cached.models != models.len());
+        if stale {
+            let needle = self.filter.trim().to_lowercase();
+            let positions: Vec<usize> = models
+                .iter()
+                .enumerate()
+                .filter(|(_, model)| {
+                    if needle.is_empty() {
+                        return true;
+                    }
+                    model.id.to_lowercase().contains(&needle)
+                        || model.name.to_lowercase().contains(&needle)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            self.filtered = Some(Filtered {
+                filter: self.filter.clone(),
+                models: models.len(),
+                positions: positions.into(),
+            });
+        }
+        Arc::clone(
+            &self
+                .filtered
+                .as_ref()
+                .expect("the filter was built")
+                .positions,
+        )
+    }
+
+    /// Forget the result of the last filter.
+    ///
+    /// The list of the models changed under the dialog, so the result of the
+    /// filter is not the result of the new list any more.
+    pub fn invalidate(&mut self) {
+        self.filtered = None;
     }
 
     /// Remember the model the user picked.
@@ -156,18 +308,42 @@ impl ModelPicker {
 }
 
 /// One line of the pipeline log.
+///
+/// The strings of the line are built when the event arrives, and not when the
+/// line is drawn: the window draws the log in every frame.
 #[derive(Debug, Clone)]
 pub struct PipelineLog {
     /// Unix timestamp of the event.
     pub at: i64,
     /// The event itself.
-    pub event: RunEvent,
+    event: RunEvent,
+    /// The time of the event, ready to be shown.
+    time: String,
+    /// The name of the agent, ready to be shown.
+    role: String,
+    /// The summary of the event, ready to be shown.
+    summary: String,
+    /// The prompt of the event, ready to be shown.
+    prompt: String,
 }
 
 impl PipelineLog {
     /// Build a log entry.
     pub fn new(at: i64, event: RunEvent) -> Self {
-        Self { at, event }
+        let role = event
+            .role()
+            .map(|role| role.label().to_string())
+            .unwrap_or_else(|| "pipeline".to_string());
+        let summary = event.summary();
+        let prompt = prompt_of(&event).to_string();
+        Self {
+            at,
+            event,
+            time: format_time(at),
+            role,
+            summary,
+            prompt,
+        }
     }
 
     /// The agent the event belongs to, when it has one.
@@ -175,9 +351,29 @@ impl PipelineLog {
         self.event.role()
     }
 
+    /// The name of the agent, ready to be shown.
+    pub fn role_label(&self) -> &str {
+        &self.role
+    }
+
+    /// The time of the event, ready to be shown.
+    pub fn time(&self) -> &str {
+        &self.time
+    }
+
     /// The one-line summary shown in the log.
-    pub fn summary(&self) -> String {
-        self.event.summary()
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// The prompt of the event, ready to be shown.
+    pub fn prompt(&self) -> &str {
+        &self.prompt
+    }
+
+    /// The prompt of the event, ready to be changed.
+    pub fn prompt_mut(&mut self) -> &mut String {
+        &mut self.prompt
     }
 }
 
@@ -317,10 +513,12 @@ mod tests {
         picker.filter = "minimax".to_string();
         let filtered = picker.filtered(&models);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].id, "hnc/MiniMax-M3.1-Flash");
+        assert_eq!(models[filtered[0]].id, "hnc/MiniMax-M3.1-Flash");
 
         picker.filter = "codex".to_string();
-        assert_eq!(picker.filtered(&models).len(), 1);
+        let filtered = picker.filtered(&models);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(models[filtered[0]].id, "opencode/gpt-5.3-codex");
 
         picker.filter = String::new();
         assert_eq!(picker.filtered(&models).len(), 2);
@@ -335,6 +533,33 @@ mod tests {
     }
 
     #[test]
+    fn the_filter_is_not_built_again_for_every_frame() {
+        let models = vec![
+            model("a/1", "One"),
+            model("b/2", "Two"),
+            model("c/3", "Three"),
+        ];
+        let mut picker = ModelPicker::new(PickerIntent::Pipeline, None);
+        let first = picker.filtered(&models);
+        let second = picker.filtered(&models);
+        // The same result is handed out: the dialog does not filter the list
+        // again in every frame.
+        assert!(Arc::ptr_eq(&first, &second));
+
+        // The text of the user changes the result.
+        picker.filter = "two".to_string();
+        let third = picker.filtered(&models);
+        assert!(!Arc::ptr_eq(&first, &third));
+        assert_eq!(third.len(), 1);
+        assert_eq!(models[third[0]].id, "b/2");
+
+        // The list of the models changes the result as well.
+        picker.invalidate();
+        let fourth = picker.filtered(&models);
+        assert!(!Arc::ptr_eq(&third, &fourth));
+    }
+
+    #[test]
     fn the_chosen_model_is_found_again() {
         let models = vec![model("a/1", "One"), model("b/2", "Two")];
         let mut picker = ModelPicker::new(PickerIntent::Terminal, None);
@@ -343,23 +568,27 @@ mod tests {
         assert!(picker.chosen(&[]).is_none());
     }
 
-    #[test]
-    fn a_repository_counts_its_missing_commits() {
-        let repo = Repo {
+    /// Build a repository of the tests.
+    fn repo(name: &str) -> Repo {
+        Repo {
             id: 1,
-            name: "demo".to_string(),
+            name: name.to_string(),
             path: std::path::PathBuf::from("/tmp/demo"),
             upstream_url: String::new(),
             upstream_web: String::new(),
             main_branch: "main".to_string(),
             pending_commits: 0,
             last_fetched_at: None,
-        };
-        let mut view = RepoView::new(repo);
+        }
+    }
+
+    #[test]
+    fn a_repository_counts_its_missing_commits() {
+        let mut view = RepoView::new(repo("demo"));
         assert_eq!(view.pending(), 0);
         assert_eq!(view.unassessed(), 0);
 
-        view.commits.push(UpstreamCommit {
+        view.set_commits(vec![UpstreamCommit {
             repo_id: 1,
             sha: "a".to_string(),
             short_sha: "a".to_string(),
@@ -373,10 +602,91 @@ mod tests {
             insertions: 0,
             deletions: 0,
             url: String::new(),
-        });
+        }]);
         assert_eq!(view.pending(), 1);
         assert_eq!(view.unassessed(), 1);
         assert!(view.assessment("a").is_none());
+    }
+
+    /// Build a commit of the tests.
+    fn commit(sha: &str, author: &str, files: usize) -> UpstreamCommit {
+        UpstreamCommit {
+            repo_id: 1,
+            sha: sha.to_string(),
+            short_sha: sha.chars().take(8).collect(),
+            summary: format!("the commit {sha}"),
+            body: String::new(),
+            author: author.to_string(),
+            author_email: String::new(),
+            authored_at: 0,
+            committed_at: 0,
+            files: (0..files).map(|index| format!("file-{index}.rs")).collect(),
+            insertions: 12,
+            deletions: 3,
+            url: String::new(),
+        }
+    }
+
+    /// Build an assessment of the tests.
+    fn assessment(sha: &str) -> Assessment {
+        Assessment {
+            repo_id: 1,
+            sha: sha.to_string(),
+            criticality: Criticality::Medium,
+            complexity: Complexity::Easy,
+            criticality_confidence: 0.5,
+            complexity_confidence: 0.5,
+            needs_review: false,
+            rationale: String::new(),
+            model: "foq".to_string(),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn the_commit_is_found_by_its_object_id() {
+        let mut view = RepoView::new(repo("demo"));
+        view.set_commits(vec![commit("aaa", "ada", 0), commit("bbb", "bob", 2)]);
+        assert_eq!(
+            view.commit("bbb").map(|commit| commit.author.as_str()),
+            Some("bob")
+        );
+        assert!(view.commit("ccc").is_none());
+    }
+
+    #[test]
+    fn the_row_of_a_commit_is_built_once() {
+        let mut view = RepoView::new(repo("demo"));
+        view.set_commits(vec![commit("aaa", "ada", 3)]);
+        let row = view.row(0);
+        assert_eq!(row.detail, "ada · aaa · +12 −3");
+        assert_eq!(row.files.as_deref(), Some("3 файла"));
+
+        // The row of a commit that touches no file has no number of files.
+        view.set_commits(vec![commit("bbb", "bob", 0)]);
+        assert!(view.row(0).files.is_none());
+    }
+
+    #[test]
+    fn the_number_of_the_unrated_commits_follows_the_assessments() {
+        let mut view = RepoView::new(repo("demo"));
+        view.set_commits(vec![commit("aaa", "ada", 0), commit("bbb", "bob", 0)]);
+        assert_eq!(view.unassessed(), 2);
+
+        view.insert_assessment(assessment("aaa"));
+        assert_eq!(view.unassessed(), 1);
+
+        // The same assessment again does not change the number.
+        view.insert_assessment(assessment("aaa"));
+        assert_eq!(view.unassessed(), 1);
+
+        // An assessment of a commit that is not pending changes nothing.
+        view.insert_assessment(assessment("ccc"));
+        assert_eq!(view.unassessed(), 1);
+
+        // A new list of commits counts the ones that are not rated yet.
+        view.set_commits(vec![commit("aaa", "ada", 0), commit("bbb", "bob", 0)]);
+        assert_eq!(view.unassessed(), 1);
     }
 
     #[test]

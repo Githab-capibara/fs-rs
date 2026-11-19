@@ -107,6 +107,21 @@ Quadro M4000M:
 The full report, with every commit, is in the
 [benchmark report](docs/benchmarks/README.md).
 
+The window of the dashboard, against a fork of `sharkdp/fd` that is 1450
+commits behind its upstream — the table of the commits draws only the rows
+that are visible, so the cost of a frame does not grow with the backlog:
+
+| Metric | Value |
+|--------|-------|
+| The commits that are shown | 1450 |
+| The median frame | **166 µs** (was 13.7 ms) |
+| The table of the commits | **82 µs** (was 13.6 ms) |
+| The slowest frame of a run | 9–22 ms — the one that paid for the fonts and the layout |
+
+The measurement and the decision behind it are in
+[ADR-19](docs/adr/ADR-19-draw-only-the-visible-rows.md) and in
+[the benchmarks](docs/benchmarks/README.md).
+
 ---
 
 ## Build

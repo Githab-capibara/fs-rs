@@ -22,6 +22,7 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-16](ADR-16-count-the-lines-of-a-commit-in-one-pass.md) | Count the lines of a commit in one pass | Accepted |
 | [ADR-17](ADR-17-write-only-the-rows-that-really-changed.md) | Write only the rows that really changed | Accepted |
 | [ADR-18](ADR-18-keep-the-statistics-of-the-commits-in-memory.md) | Keep the statistics of the commits in memory | Accepted |
+| [ADR-19](ADR-19-draw-only-the-visible-rows.md) | Draw only the visible rows of the table of the commits | Accepted |
 
 ## How to read an ADR
 

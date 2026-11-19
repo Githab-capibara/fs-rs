@@ -86,6 +86,26 @@ fn make_upstream(root: &Path) -> PathBuf {
     path
 }
 
+/// Create the upstream repository with `count` commits.
+///
+/// Every commit is named after its number, so that the test can ask for a
+/// commit by its description.
+fn make_upstream_with(root: &Path, count: usize) -> PathBuf {
+    let path = root.join("upstream");
+    std::fs::create_dir_all(&path).unwrap();
+    git(&path, &["init", "-q", "-b", "main"]);
+    git(&path, &["config", "user.email", "upstream@example.com"]);
+    git(&path, &["config", "user.name", "Upstream"]);
+
+    for number in 0..count {
+        std::fs::write(path.join("a.txt"), format!("{number}\n")).unwrap();
+        git(&path, &["add", "."]);
+        git(&path, &["commit", "-q", "-m", &format!("Commit {number}")]);
+    }
+
+    path
+}
+
 /// Create the fork that misses the last upstream commit.
 fn make_fork(root: &Path, upstream: &Path) -> PathBuf {
     let path = root.join("fork");
@@ -104,6 +124,31 @@ fn make_fork(root: &Path, upstream: &Path) -> PathBuf {
     // The fork stays on the first commit, so the second one is missing.
     let first = git_output(&path, &["rev-parse", "HEAD~1"]);
     git(&path, &["reset", "-q", "--hard", first.trim()]);
+
+    path
+}
+
+/// Create the fork that misses every commit of the upstream.
+///
+/// The fork is left on the very first commit of the upstream, so that the
+/// dashboard has to show the whole history of the upstream.
+fn make_fork_behind(root: &Path, upstream: &Path) -> PathBuf {
+    let path = root.join("fork");
+    git(
+        root,
+        &[
+            "clone",
+            "-q",
+            upstream.to_str().unwrap(),
+            path.to_str().unwrap(),
+        ],
+    );
+    git(&path, &["config", "user.email", "fork@example.com"]);
+    git(&path, &["config", "user.name", "Fork"]);
+
+    let first = git_output(&path, &["rev-list", "--max-parents=0", "HEAD"]);
+    let first = first.lines().next().expect("the first commit").trim();
+    git(&path, &["reset", "-q", "--hard", first]);
 
     path
 }
@@ -267,6 +312,28 @@ fn fixture() -> Fixture {
     }
 }
 
+/// Build the fixture whose fork misses `count` upstream commits.
+///
+/// The list of the commits of such a fork is longer than the window, and the
+/// table of the commits has to draw only the rows that are visible.
+fn fixture_with_backlog(count: usize) -> Fixture {
+    let temp = tempfile::tempdir().expect("the temporary directory");
+    // The fork stays on the very first commit of the upstream, so the
+    // upstream has to hold one commit more than the backlog.
+    let upstream = make_upstream_with(temp.path(), count + 1);
+    let fork = make_fork_behind(temp.path(), &upstream);
+    let foq = FakeFoq::start();
+    let config_path = temp.path().join("config.toml");
+
+    Fixture {
+        _temp: temp,
+        upstream,
+        fork,
+        foq,
+        config_path,
+    }
+}
+
 /// Build the dashboard on top of the fixture.
 ///
 /// The model discovery is skipped at startup: the dashboard asks the agent
@@ -334,11 +401,25 @@ fn wait_for_commits(harness: &mut Harness<'_, FsrsApp>) {
     let synced = pump_until(harness, Duration::from_secs(30), |app| {
         app.repos()
             .first()
-            .is_some_and(|view| view.commits.len() == 1)
+            .is_some_and(|view| view.commits().len() == 1)
     });
     assert!(
         synced,
         "the upstream commits should arrive, the error was {:?}",
+        harness.state().error()
+    );
+}
+
+/// Wait until the dashboard knows about the `count` missing upstream commits.
+fn wait_for_backlog(harness: &mut Harness<'_, FsrsApp>, count: usize) {
+    let synced = pump_until(harness, Duration::from_secs(60), |app| {
+        app.repos()
+            .first()
+            .is_some_and(|view| view.commits().len() == count)
+    });
+    assert!(
+        synced,
+        "the {count} upstream commits should arrive, the error was {:?}",
         harness.state().error()
     );
 }
@@ -380,6 +461,66 @@ fn the_window_shows_the_repository_and_its_missing_commits() {
     assert!(
         harness.query_by_label("РЕАЛИЗОВАТЬ").is_some(),
         "the button should be shown"
+    );
+}
+
+/// The table of the commits draws only the rows that are visible.
+///
+/// A fork that is behind its upstream by two hundred commits has two hundred
+/// rows, and the window shows a dozen of them. The rows that are not visible
+/// are not drawn at all: the window draws them when the reader scrolls to
+/// them, and the time of a frame does not grow with the size of the backlog.
+#[test]
+fn the_table_of_the_commits_draws_only_the_visible_rows() {
+    const BACKLOG: usize = 200;
+    let fixture = fixture_with_backlog(BACKLOG);
+    let mut harness = window(&fixture);
+    wait_for_backlog(&mut harness, BACKLOG);
+
+    // The list of the commits is whole, even though only a few of them are
+    // drawn.
+    assert_eq!(harness.state().repos()[0].commits().len(), BACKLOG);
+
+    // Every visible row has a button, and there are far fewer of them than
+    // there are commits.
+    let drawn = harness.query_all_by_label("РЕАЛИЗОВАТЬ").count();
+    assert!(drawn > 0, "the visible rows should be drawn");
+    assert!(
+        drawn < 30,
+        "only the visible rows should be drawn, {drawn} of {BACKLOG} were"
+    );
+
+    // The newest commit is at the top of the list, and the oldest one is far
+    // below it.
+    assert!(
+        harness.query_by_label("Commit 200").is_some(),
+        "the newest commit should be drawn"
+    );
+    assert!(
+        harness.query_by_label("Commit 1").is_none(),
+        "the oldest commit is below the window and should not be drawn"
+    );
+
+    // Scrolling to the end draws the last row and forgets the first one.
+    let mut reached = false;
+    for _ in 0..300 {
+        if harness.query_by_label("Commit 1").is_some() {
+            reached = true;
+            break;
+        }
+        let Some(node) = harness.query_all_by_label("РЕАЛИЗОВАТЬ").next() else {
+            break;
+        };
+        node.scroll_down();
+        harness.step();
+    }
+    assert!(
+        reached,
+        "the oldest commit should be drawn after the scroll"
+    );
+    assert!(
+        harness.query_by_label("Commit 200").is_none(),
+        "the newest commit should be forgotten after the scroll"
     );
 }
 
@@ -512,7 +653,7 @@ fn the_commits_are_rated_by_the_local_model() {
     let rated = pump_until(&mut harness, Duration::from_secs(60), |app| {
         app.repos()
             .first()
-            .is_some_and(|view| !view.assessments.is_empty())
+            .is_some_and(|view| !view.assessments().is_empty())
     });
     assert!(
         rated,
@@ -525,7 +666,7 @@ fn the_commits_are_rated_by_the_local_model() {
         .state()
         .repos()
         .first()
-        .and_then(|view| view.assessments.values().next())
+        .and_then(|view| view.assessments().values().next())
         .expect("an assessment");
     assert_eq!(assessment.criticality.badge(), "M");
     assert_eq!(assessment.complexity.badge(), "M");
@@ -557,8 +698,8 @@ fn the_prepared_data_survives_the_background() {
 
     let app = harness.state();
     let view = &app.repos()[0];
-    assert_eq!(view.commits.len(), 2);
-    assert_eq!(view.assessments.len(), 2);
+    assert_eq!(view.commits().len(), 2);
+    assert_eq!(view.assessments().len(), 2);
     assert_eq!(view.unassessed(), 0);
     // The number of the updates is shown in the right form of the plural.
     assert!(
@@ -569,7 +710,7 @@ fn the_prepared_data_survives_the_background() {
 
     // A message of the background worker must not empty the window.
     harness.step();
-    assert_eq!(harness.state().repos()[0].commits.len(), 2);
+    assert_eq!(harness.state().repos()[0].commits().len(), 2);
 }
 
 /// The buttons of the window do not need a real agent to be usable.

@@ -146,8 +146,12 @@ fn main() -> Result<()> {
     }
 
     let settings = config::load(&config_path)?;
-    let store = Store::open(&data_dir.join("fsrs.db"))?;
-    let worker = Worker::new()?;
+    let database = data_dir.join("fsrs.db");
+    let store = Store::open(&database)?;
+    // The background writes to the database as well: the window draws its
+    // frames while the background works, and a write of the disk on the
+    // thread of the window is a pause of the window.
+    let worker = Worker::with_store(&database)?;
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
