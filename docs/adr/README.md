@@ -25,6 +25,7 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-19](ADR-19-draw-only-the-visible-rows.md) | Draw only the visible rows of the table of the commits | Accepted |
 | [ADR-20](ADR-20-redraw-the-window-when-something-happens.md) | Redraw the window when something happens | Accepted |
 | [ADR-21](ADR-21-write-the-events-of-a-run-in-one-transaction.md) | Write the events of a run in one transaction | Accepted |
+| [ADR-22](ADR-22-write-the-big-bodies-with-sonic-rs.md) | Write the big bodies with sonic-rs | Accepted |
 
 ## How to read an ADR
 

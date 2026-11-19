@@ -1588,7 +1588,6 @@ dependencies = [
  "git2",
  "rusqlite",
  "serde",
- "serde_json",
  "sonic-rs",
  "tempfile",
  "thiserror 2.0.21",

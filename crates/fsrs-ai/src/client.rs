@@ -439,8 +439,8 @@ impl FoqClient {
         let url = format!("{}/completion", self.base_url);
         self.count_request();
         // The payload carries the whole diff, so it is the largest string
-        // that leaves the process: `sonic-rs` writes it twice as fast as the
-        // general purpose serializer.
+        // that leaves the process: `sonic-rs` writes it about six times
+        // faster than the general purpose serializer (ADR-22).
         let body = sonic_rs::to_string(payload)
             .map_err(|err| FoqError::InvalidResponse(err.to_string()))?;
         let mut response = match self.send_completion(&url, &body) {

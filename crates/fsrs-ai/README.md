@@ -29,9 +29,11 @@ cargo run -p fsrs-ai --example benchmark -- /path/to/upstream HEAD 60 \
 | Benchmark | What it measures |
 |-----------|------------------|
 | [`benches/context.rs`](benches/context.rs) | The fitting of a prompt into the window: the estimate against the binary search it replaced — the calls to the runtime and the time |
+| [`benches/json.rs`](benches/json.rs) | The two serializers of the crate against each other — the body of a request with the diff of a commit |
 
 ```bash
 cargo bench -p fsrs-ai --bench context
+cargo bench -p fsrs-ai --bench json
 ```
 
 | Test suite | What it covers |

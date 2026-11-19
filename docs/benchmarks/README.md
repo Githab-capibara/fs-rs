@@ -577,3 +577,27 @@ cargo bench -p fsrs-ai --bench context
 The times are of the algorithm alone, with a local tokenizer: the calls
 themselves are measured against the live server, and they are the part that
 costs seconds.
+
+## The serializers
+
+The body of every request carries the diff of the commit, so the serializer
+that writes it is on the path of every rating. The fast serializer writes the
+body of the request in 11.5 µs; the general purpose one needs 68.3 µs for the
+same body. The answers are small, and both serializers read them in about
+10 µs, so the answers stay with the general purpose one.
+
+The numbers are the medians of Criterion over the benchmark in
+[`crates/fsrs-ai/benches/json.rs`](../../crates/fsrs-ai/benches/json.rs), with
+a diff of sixty thousand characters:
+
+```bash
+cargo bench -p fsrs-ai --bench json
+```
+
+| Body | `sonic-rs` | `serde_json` |
+|------|------------|--------------|
+| The request of a completion, written | 11.5 µs | 68.3 µs |
+| The answer of a completion, read | 10.4 µs | 10.0 µs |
+
+The decision behind these numbers is in
+[ADR-22](../adr/ADR-22-write-the-big-bodies-with-sonic-rs.md).

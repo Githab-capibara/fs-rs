@@ -272,6 +272,38 @@ check(
     "the transaction of the events of a run",
 )
 
+# --- The serializers --------------------------------------------------
+ai_manifest = read("crates/fsrs-ai/Cargo.toml")
+core_manifest = read("crates/fsrs-core/Cargo.toml")
+client = read("crates/fsrs-ai/src/client.rs")
+check(
+    "The typed bodies of the decision model are written with sonic-rs",
+    "sonic_rs::to_string(payload)" in client
+    and "sonic_rs::from_str(&body)" in client,
+    "the body of a completion",
+)
+check(
+    "The small untyped answers of the runtime stay with serde_json",
+    "serde_json::from_str::<serde_json::Value>(&body)" in client,
+    "the answer of the tokenizer",
+)
+check(
+    "The core crate does not depend on the untyped serializer",
+    "serde_json" not in core_manifest and "sonic-rs" in core_manifest,
+    "the dependencies of the core crate",
+)
+check(
+    "The HTTP client of the decision model carries no serializer of its own",
+    'ureq = { version = "3", default-features = false }' in ai_manifest,
+    "the features of the HTTP client",
+)
+check(
+    "The two serializers are measured against each other",
+    "write_the_request_with_sonic" in read("crates/fsrs-ai/benches/json.rs")
+    and 'name = "json"' in ai_manifest,
+    "the benchmark of the serializers",
+)
+
 # --- The worker -------------------------------------------------------
 worker = read("crates/fsrs-app/src/worker.rs")
 check(
@@ -383,6 +415,7 @@ for relative in (
     "crates/fsrs-ai/README.md",
     "crates/fsrs-acp/README.md",
     "crates/fsrs-app/README.md",
+    "crates/fsrs-ai/benches/json.rs",
     "deny.toml",
     ".github/workflows/ci.yml",
     "scripts/build-pgo.sh",

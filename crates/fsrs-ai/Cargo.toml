@@ -30,3 +30,7 @@ features = ["cargo_bench_support"]
 [[bench]]
 name = "context"
 harness = false
+
+[[bench]]
+name = "json"
+harness = false
