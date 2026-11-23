@@ -1156,7 +1156,7 @@ impl FsrsApp {
                             let unassessed = view.unassessed();
                             let syncing = view.syncing;
 
-                            egui::Frame::group(ui.style())
+                            egui::Frame::default()
                                 .inner_margin(8.0)
                                 .show(ui, |ui| {
                                     ui.set_min_width(240.0);
@@ -1239,6 +1239,7 @@ impl FsrsApp {
         egui::Panel::right("terminal")
             .resizable(true)
             .min_size(250.0)
+            .max_size(800.0)
             .default_size(620.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1254,7 +1255,6 @@ impl FsrsApp {
                             ui.label(
                                 egui::RichText::new(format!("pid {pid}"))
                                     .small()
-                                    .weak()
                                     .monospace(),
                             );
                         }
@@ -1285,25 +1285,23 @@ impl FsrsApp {
     /// The strings of every line are built when the event arrives, so the
     /// panel only draws them.
     fn log_panel(&mut self, ui: &mut egui::Ui) {
-        let FsrsApp { log, run_state, .. } = self;
+        let FsrsApp { log, .. } = self;
         let count = log.len();
 
         egui::Panel::bottom("log")
             .resizable(true)
+            .min_size(80.0)
             .default_size(220.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Журнал реализации");
-                    if let Some(state) = run_state {
-                        ui.label(format!("{state:?}"));
-                    }
                     ui.label(format!("событий: {count}"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for entry in log.iter_mut() {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(entry.time()).small().monospace().weak());
+                            ui.label(egui::RichText::new(entry.time()).small().monospace());
                             ui.label(egui::RichText::new(entry.role_label()).strong());
                             ui.label(entry.summary());
                         });
@@ -1336,7 +1334,10 @@ impl FsrsApp {
         let Some(index) = self.selected_repo else {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Выберите репозиторий");
+                    ui.vertical_centered(|ui| {
+                        ui.label("Выберите репозиторий");
+                        ui.label(egui::RichText::new("Кликните карточку репозитория в полосе выше.").weak());
+                    });
                 });
             });
             return;
