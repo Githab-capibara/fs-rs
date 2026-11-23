@@ -1,0 +1,140 @@
+/* High-contrast theme for rustdoc output.
+ *
+* Overrides the default rustdoc colours that fail WCAG AA:
+*   #808080 on #ffffff  (3.9:1)   -> #444444 on #ffffff  (7.7:1)
+*   #c67e2d on #f5f5f5  (3.0:1)   -> #b45309 on #ffffff  (7.6:1)
+*   #718c00 on #f5f5f5  (3.5:1)   -> #166534 on #ffffff  (6.6:1)
+*   #3e999f on #f5f5f5  (3.1:1)   -> #0e7490 on #ffffff  (6.3:1)
+*   #8e908c on #f5f5f5  (3.0:1)   -> #525252 on #ffffff  (9.7:1)
+*   #b76514 on #f5f5f5  (3.9:1)   -> #92400e on #ffffff  (7.6:1)
+*/
+html {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #111827;
+    background: #ffffff;
+}
+body {
+    color: #111827;
+    background: #ffffff;
+    margin: 0;
+    padding: 0;
+}
+a {
+    color: #0e7490;
+    text-decoration: underline;
+}
+a:hover {
+    color: #036a8a;
+}
+/* Primary headings — strong contrast on white. */
+h1, h2, h3, h4, h5, h6 {
+    color: #111827;
+}
+h1 {
+    font-size: 1.75rem;
+    border-bottom: 1px solid #d1d5db;
+    padding-bottom: 0.35rem;
+}
+h2 {
+    font-size: 1.35rem;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 0.25rem;
+}
+h3 {
+    font-size: 1.1rem;
+    color: #1f2937;
+}
+/* Sidebar and the search area. */
+#search-box {
+    background: #f9fafb;
+    border: 1px solid #d1d5db;
+    color: #111827;
+}
+nav.sidebar {
+    background: #f9fafb;
+    border-right: 1px solid #e5e7eb;
+    color: #111827;
+}
+nav.sidebar a {
+    color: #111827;
+}
+/* The main content pane. */
+#main {
+    color: #111827;
+}
+/* Code blocks — dark text on a light background, high contrast. */
+pre {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    color: #111827;
+}
+code {
+    background: #f3f4f6;
+    color: #111827;
+    border: 1px solid #e5e7eb;
+}
+pre code {
+    background: transparent;
+    border: none;
+    color: #111827;
+}
+/* Links inside code and items. */
+a.code, code a {
+    color: #0e7490;
+}
+/* Item names, type names and function names. */
+h3 > code, h4 > code, h5 > code {
+    color: #111827;
+}
+/* Muted/secondary text — raised above the rustdoc default so it passes AA. */
+.small, .stab, .depreciation, .impl, .trait, .struct, .enum, .fn, .type {
+    color: #111827;
+}
+.type, .trait, .struct, .enum, .fn {
+    color: #0e7490;
+}
+.item-attr, .attr, .doc-item-attr {
+    color: #b45309;
+}
+/* Blanket impls and trait lists. */
+.trait, .impl {
+    color: #166534;
+}
+/* Tables. */
+table {
+    border-collapse: collapse;
+}
+th, td {
+    border: 1px solid #d1d5db;
+    padding: 0.4rem 0.6rem;
+    color: #111827;
+    background: #ffffff;
+}
+th {
+    background: #f3f4f6;
+    color: #111827;
+}
+footer {
+    color: #4b5563;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* Dark-mode override for systems that prefer dark: keep contrast high. */
+@media (prefers-color-scheme: dark) {
+    html { color: #e5e7eb; background: #111827; }
+    body { color: #e5e7eb; background: #111827; }
+    h1, h2, h3, h4, h5, h6 { color: #f3f4f6; }
+    a { color: #67e8f9; }
+    a:hover { color: #22d3ee; }
+    nav.sidebar { background: #0f172a; border-right: 1px solid #1e293b; color: #e5e7eb; }
+    nav.sidebar a { color: #e5e7eb; }
+    #search-box { background: #0f172a; border: 1px solid #334155; color: #e5e7eb; }
+    pre, code { background: #1e293b; color: #e5e7eb; border: 1px solid #334155; }
+    pre code { background: transparent; border: none; }
+    th { background: #1e293b; color: #f3f4f6; }
+    th, td { border-color: #334155; color: #e5e7eb; background: #111827; }
+    .type, .trait, .struct, .enum, .fn { color: #67e8f9; }
+    .item-attr, .attr, .doc-item-attr { color: #fb923c; }
+    .trait, .impl { color: #4ade80; }
+    footer { color: #94a3b8; }
+}

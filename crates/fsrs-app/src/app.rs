@@ -1108,22 +1108,25 @@ impl FsrsApp {
         let status = status.as_str();
         let config_label = config_label.as_str();
 
-        egui::Panel::top("header").exact_size(34.0).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("fs-rs");
-                ui.separator();
-                ui.label(format!("Модель: {model}"));
-                ui.separator();
-                ui.label(format!("Реализация: {run}"));
-                ui.separator();
-                ui.label(status);
-                ui.separator();
-                ui.label(egui::RichText::new(config_label).small().weak().monospace());
-                if let Some(error) = error {
-                    ui.colored_label(egui::Color32::from_rgb(220, 90, 80), error);
-                }
+        egui::Panel::top("header")
+            .min_size(30.0)
+            .max_size(80.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("fs-rs");
+                    ui.separator();
+                    ui.label(format!("Модель: {model}"));
+                    ui.separator();
+                    ui.label(format!("Реализация: {run}"));
+                    ui.separator();
+                    ui.label(status);
+                    ui.separator();
+                    ui.label(egui::RichText::new(config_label).small().monospace());
+                    if let Some(error) = error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                });
             });
-        });
     }
 
     /// The central list of the tracked repositories.
@@ -1140,7 +1143,8 @@ impl FsrsApp {
         } = self;
 
         egui::Panel::top("repositories")
-            .exact_size(104.0)
+            .min_size(80.0)
+            .max_size(240.0)
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -1152,7 +1156,7 @@ impl FsrsApp {
                             let unassessed = view.unassessed();
                             let syncing = view.syncing;
 
-                            egui::Frame::group(ui.style())
+                            egui::Frame::default()
                                 .inner_margin(8.0)
                                 .show(ui, |ui| {
                                     ui.set_min_width(240.0);
@@ -1166,10 +1170,7 @@ impl FsrsApp {
                                         action = Some(Action::SelectRepo(index));
                                     }
                                     ui.label(
-                                        egui::RichText::new(path.as_ref())
-                                            .small()
-                                            .weak()
-                                            .monospace(),
+                                        egui::RichText::new(path.as_ref()).small().monospace(),
                                     );
                                     ui.horizontal(|ui| {
                                         if syncing {
@@ -1192,8 +1193,7 @@ impl FsrsApp {
                                                         "коммитов",
                                                     )
                                                 ))
-                                                .small()
-                                                .weak(),
+                                                .small(),
                                             );
                                         }
                                     });
@@ -1201,7 +1201,7 @@ impl FsrsApp {
                                         ui.label(
                                             egui::RichText::new(error)
                                                 .small()
-                                                .color(egui::Color32::from_rgb(220, 90, 80)),
+                                                .color(ui.visuals().error_fg_color),
                                         );
                                     }
                                     ui.horizontal(|ui| {
@@ -1215,12 +1215,9 @@ impl FsrsApp {
                                 });
                         }
                         if repos.is_empty() {
-                            ui.label(
-                                egui::RichText::new(
-                                    "Нет репозиториев. Добавьте их в ~/.config/fs-rs/config.toml",
-                                )
-                                .weak(),
-                            );
+                            ui.label(egui::RichText::new(
+                                "Нет репозиториев. Добавьте их в ~/.config/fs-rs/config.toml",
+                            ));
                         }
                     });
                 });
@@ -1241,22 +1238,23 @@ impl FsrsApp {
 
         egui::Panel::right("terminal")
             .resizable(true)
+            .min_size(250.0)
+            .max_size(800.0)
             .default_size(620.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(&title);
                     if let Some(terminal) = self.terminal.as_mut() {
                         if let Some(program_title) = terminal.title() {
-                            ui.label(egui::RichText::new(program_title).weak());
+                            ui.label(egui::RichText::new(program_title));
                         }
                         if terminal.has_exited() {
-                            ui.label(egui::RichText::new("процесс завершился").weak());
+                            ui.label(egui::RichText::new("процесс завершился"));
                         }
                         if let Some(pid) = terminal.process_id() {
                             ui.label(
                                 egui::RichText::new(format!("pid {pid}"))
                                     .small()
-                                    .weak()
                                     .monospace(),
                             );
                         }
@@ -1287,25 +1285,23 @@ impl FsrsApp {
     /// The strings of every line are built when the event arrives, so the
     /// panel only draws them.
     fn log_panel(&mut self, ui: &mut egui::Ui) {
-        let FsrsApp { log, run_state, .. } = self;
+        let FsrsApp { log, .. } = self;
         let count = log.len();
 
         egui::Panel::bottom("log")
             .resizable(true)
+            .min_size(80.0)
             .default_size(220.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Журнал реализации");
-                    if let Some(state) = run_state {
-                        ui.label(format!("{state:?}"));
-                    }
                     ui.label(format!("событий: {count}"));
                 });
                 ui.separator();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for entry in log.iter_mut() {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(entry.time()).small().monospace().weak());
+                            ui.label(egui::RichText::new(entry.time()).small().monospace());
                             ui.label(egui::RichText::new(entry.role_label()).strong());
                             ui.label(entry.summary());
                         });
@@ -1338,7 +1334,10 @@ impl FsrsApp {
         let Some(index) = self.selected_repo else {
             egui::CentralPanel::default().show(ui, |ui| {
                 ui.centered_and_justified(|ui| {
-                    ui.label("Выберите репозиторий");
+                    ui.vertical_centered(|ui| {
+                        ui.label("Выберите репозиторий");
+                        ui.label(egui::RichText::new("Кликните карточку репозитория в полосе выше.").weak());
+                    });
                 });
             });
             return;
@@ -1354,7 +1353,7 @@ impl FsrsApp {
             ui.separator();
 
             if count == 0 {
-                ui.label(egui::RichText::new("Нет новых коммитов").weak());
+                ui.label(egui::RichText::new("Нет новых коммитов"));
                 return;
             }
 
@@ -1461,9 +1460,9 @@ impl FsrsApp {
                             });
                         }
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&row.detail).small().weak().monospace());
+                            ui.label(egui::RichText::new(&row.detail).small().monospace());
                             if let Some(files) = &row.files {
-                                ui.label(egui::RichText::new(files).small().weak());
+                                ui.label(egui::RichText::new(files).small());
                             }
                         });
                     },
@@ -1537,7 +1536,7 @@ impl FsrsApp {
                         }
                     });
                     if let Some(error) = &picker.error {
-                        ui.colored_label(egui::Color32::from_rgb(220, 90, 80), error);
+                        ui.colored_label(ui.visuals().error_fg_color, error);
                     }
 
                     let filtered = picker.filtered(models);
