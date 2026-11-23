@@ -1108,22 +1108,25 @@ impl FsrsApp {
         let status = status.as_str();
         let config_label = config_label.as_str();
 
-        egui::Panel::top("header").exact_size(34.0).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("fs-rs");
-                ui.separator();
-                ui.label(format!("Модель: {model}"));
-                ui.separator();
-                ui.label(format!("Реализация: {run}"));
-                ui.separator();
-                ui.label(status);
-                ui.separator();
-                ui.label(egui::RichText::new(config_label).small().weak().monospace());
-                if let Some(error) = error {
-                    ui.colored_label(egui::Color32::from_rgb(220, 90, 80), error);
-                }
+        egui::Panel::top("header")
+            .min_size(30.0)
+            .max_size(80.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("fs-rs");
+                    ui.separator();
+                    ui.label(format!("Модель: {model}"));
+                    ui.separator();
+                    ui.label(format!("Реализация: {run}"));
+                    ui.separator();
+                    ui.label(status);
+                    ui.separator();
+                    ui.label(egui::RichText::new(config_label).small().monospace());
+                    if let Some(error) = error {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
+                });
             });
-        });
     }
 
     /// The central list of the tracked repositories.
@@ -1140,7 +1143,8 @@ impl FsrsApp {
         } = self;
 
         egui::Panel::top("repositories")
-            .exact_size(104.0)
+            .min_size(80.0)
+            .max_size(240.0)
             .show(ui, |ui| {
                 egui::ScrollArea::horizontal().show(ui, |ui| {
                     ui.horizontal(|ui| {
@@ -1166,10 +1170,7 @@ impl FsrsApp {
                                         action = Some(Action::SelectRepo(index));
                                     }
                                     ui.label(
-                                        egui::RichText::new(path.as_ref())
-                                            .small()
-                                            .weak()
-                                            .monospace(),
+                                        egui::RichText::new(path.as_ref()).small().monospace(),
                                     );
                                     ui.horizontal(|ui| {
                                         if syncing {
@@ -1192,8 +1193,7 @@ impl FsrsApp {
                                                         "коммитов",
                                                     )
                                                 ))
-                                                .small()
-                                                .weak(),
+                                                .small(),
                                             );
                                         }
                                     });
@@ -1201,7 +1201,7 @@ impl FsrsApp {
                                         ui.label(
                                             egui::RichText::new(error)
                                                 .small()
-                                                .color(egui::Color32::from_rgb(220, 90, 80)),
+                                                .color(ui.visuals().error_fg_color),
                                         );
                                     }
                                     ui.horizontal(|ui| {
@@ -1215,12 +1215,9 @@ impl FsrsApp {
                                 });
                         }
                         if repos.is_empty() {
-                            ui.label(
-                                egui::RichText::new(
-                                    "Нет репозиториев. Добавьте их в ~/.config/fs-rs/config.toml",
-                                )
-                                .weak(),
-                            );
+                            ui.label(egui::RichText::new(
+                                "Нет репозиториев. Добавьте их в ~/.config/fs-rs/config.toml",
+                            ));
                         }
                     });
                 });
@@ -1241,16 +1238,17 @@ impl FsrsApp {
 
         egui::Panel::right("terminal")
             .resizable(true)
+            .min_size(250.0)
             .default_size(620.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading(&title);
                     if let Some(terminal) = self.terminal.as_mut() {
                         if let Some(program_title) = terminal.title() {
-                            ui.label(egui::RichText::new(program_title).weak());
+                            ui.label(egui::RichText::new(program_title));
                         }
                         if terminal.has_exited() {
-                            ui.label(egui::RichText::new("процесс завершился").weak());
+                            ui.label(egui::RichText::new("процесс завершился"));
                         }
                         if let Some(pid) = terminal.process_id() {
                             ui.label(
@@ -1354,7 +1352,7 @@ impl FsrsApp {
             ui.separator();
 
             if count == 0 {
-                ui.label(egui::RichText::new("Нет новых коммитов").weak());
+                ui.label(egui::RichText::new("Нет новых коммитов"));
                 return;
             }
 
@@ -1461,9 +1459,9 @@ impl FsrsApp {
                             });
                         }
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&row.detail).small().weak().monospace());
+                            ui.label(egui::RichText::new(&row.detail).small().monospace());
                             if let Some(files) = &row.files {
-                                ui.label(egui::RichText::new(files).small().weak());
+                                ui.label(egui::RichText::new(files).small());
                             }
                         });
                     },
@@ -1537,7 +1535,7 @@ impl FsrsApp {
                         }
                     });
                     if let Some(error) = &picker.error {
-                        ui.colored_label(egui::Color32::from_rgb(220, 90, 80), error);
+                        ui.colored_label(ui.visuals().error_fg_color, error);
                     }
 
                     let filtered = picker.filtered(models);

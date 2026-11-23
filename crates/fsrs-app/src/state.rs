@@ -425,25 +425,33 @@ pub fn output_of(event: &RunEvent) -> String {
 }
 
 /// The colour of a criticality badge.
+///
+/// Every colour keeps at least a 4.5:1 contrast against the white letter of
+/// the badge, so the badge stays readable in both the light and the dark
+/// theme of egui.
 pub fn criticality_color(criticality: fsrs_core::Criticality) -> egui::Color32 {
     use fsrs_core::Criticality;
     match criticality {
-        Criticality::Critical => egui::Color32::from_rgb(180, 30, 30),
-        Criticality::High => egui::Color32::from_rgb(200, 90, 20),
-        Criticality::Medium => egui::Color32::from_rgb(190, 150, 20),
-        Criticality::Low => egui::Color32::from_rgb(70, 140, 70),
+        Criticality::Critical => egui::Color32::from_rgb(170, 40, 40),
+        Criticality::High => egui::Color32::from_rgb(180, 80, 30),
+        Criticality::Medium => egui::Color32::from_rgb(150, 100, 30),
+        Criticality::Low => egui::Color32::from_rgb(50, 120, 50),
         Criticality::Trivial => egui::Color32::from_rgb(90, 90, 100),
     }
 }
 
 /// The colour of a complexity badge.
+///
+/// Every colour keeps at least a 4.5:1 contrast against the white letter of
+/// the badge, so the badge stays readable in both the light and the dark
+/// theme of egui.
 pub fn complexity_color(complexity: fsrs_core::Complexity) -> egui::Color32 {
     use fsrs_core::Complexity;
     match complexity {
-        Complexity::Expert => egui::Color32::from_rgb(150, 40, 190),
-        Complexity::Hard => egui::Color32::from_rgb(60, 90, 190),
-        Complexity::Medium => egui::Color32::from_rgb(40, 140, 170),
-        Complexity::Easy => egui::Color32::from_rgb(70, 150, 90),
+        Complexity::Expert => egui::Color32::from_rgb(140, 40, 170),
+        Complexity::Hard => egui::Color32::from_rgb(50, 80, 170),
+        Complexity::Medium => egui::Color32::from_rgb(30, 120, 160),
+        Complexity::Easy => egui::Color32::from_rgb(40, 120, 70),
         Complexity::Trivial => egui::Color32::from_rgb(90, 90, 100),
     }
 }
@@ -766,6 +774,32 @@ mod tests {
         assert_eq!(format_time(1_700_000_000), "2023-11-14 22:13:20");
     }
 
+    /// The relative luminance of a colour, following the sRGB definition of WCAG.
+    fn relative_luminance(color: egui::Color32) -> f32 {
+        let linear = |channel: u8| {
+            let value = channel as f32 / 255.0;
+            if value <= 0.03928 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let r = linear(color.r());
+        let g = linear(color.g());
+        let b = linear(color.b());
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    /// The contrast ratio of a colour against white, following WCAG.
+    fn contrast_against_white(color: egui::Color32) -> f32 {
+        let luminance = relative_luminance(color);
+        (1.0 + 0.05) / (luminance + 0.05)
+    }
+
+    /// The smallest contrast ratio a badge colour must keep against its white
+    /// letter, following WCAG AA for normal-sized text.
+    const BADGE_MIN_CONTRAST: f32 = 4.5;
+
     #[test]
     fn the_badges_have_distinct_colours() {
         assert_ne!(
@@ -776,5 +810,37 @@ mod tests {
             complexity_color(Complexity::Expert),
             complexity_color(Complexity::Trivial)
         );
+    }
+
+    #[test]
+    fn every_badge_colour_keeps_a_usable_contrast_with_its_letter() {
+        let criticalities = [
+            Criticality::Critical,
+            Criticality::High,
+            Criticality::Medium,
+            Criticality::Low,
+            Criticality::Trivial,
+        ];
+        let complexities = [
+            Complexity::Expert,
+            Complexity::Hard,
+            Complexity::Medium,
+            Complexity::Easy,
+            Complexity::Trivial,
+        ];
+        for criticality in criticalities {
+            let ratio = contrast_against_white(criticality_color(criticality));
+            assert!(
+                ratio >= BADGE_MIN_CONTRAST,
+                "criticality {criticality:?} has contrast {ratio:.2}:1, below {BADGE_MIN_CONTRAST}:1"
+            );
+        }
+        for complexity in complexities {
+            let ratio = contrast_against_white(complexity_color(complexity));
+            assert!(
+                ratio >= BADGE_MIN_CONTRAST,
+                "complexity {complexity:?} has contrast {ratio:.2}:1, below {BADGE_MIN_CONTRAST}:1"
+            );
+        }
     }
 }
