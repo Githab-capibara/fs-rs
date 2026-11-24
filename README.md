@@ -70,7 +70,7 @@ pipeline:
 1. the **implementer** ports the upstream change,
 2. the **reviewer** runs the fast linters — `cargo fmt --check`,
    `cargo clippy -- -D warnings`, `cargo test`, `shellcheck`, `oxlint`,
-   `typos` — and fixes everything they report,
+   `typos`, `cargo audit` or `cargo deny` — and fixes everything they report,
 3. the **verifier** judges the result and approves or rejects it.
 
 A rejection sends the feedback back to the *same* reviewer session, so the

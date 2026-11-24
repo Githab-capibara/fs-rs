@@ -78,6 +78,10 @@ The decision model owns the discrete NVIDIA GPU. The order of preference is:
 2. the integrated Intel GPU,
 3. the CPU.
 
+The order is configured with the `gpu_preference` key of `config.toml`
+(`["nvidia", "intel", "cpu"]` by default). See
+[the configuration guide](02-configuration.md).
+
 `fsrs-ai::gpu` inspects the machine: it reads the NVIDIA devices through
 `nvidia-smi`, the Intel devices through the render nodes in `/dev/dri`, and it
 lists the processes that hold the NVIDIA device. A foreign process that holds

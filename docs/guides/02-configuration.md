@@ -12,6 +12,9 @@ foq_profile = "lora"
 min_confidence = 0.8
 foq_timeout_secs = 120
 
+# GPU preference for the local decision model.
+gpu_preference = ["nvidia", "intel", "cpu"]
+
 # The agents.
 acp_command = "opencode acp"
 terminal_command = "opencode mini"
@@ -37,9 +40,17 @@ main_branch = "master"
 | `foq_profile` | `lora` | Calibration profile. `lora` fits the model with the decision adapter, `bare` the model alone. |
 | `min_confidence` | `0.8` | Calibrated confidence below which a rating is flagged for review. |
 | `foq_timeout_secs` | `120` | Timeout of a single request to the decision server, in seconds. A big diff needs a long time on a slow accelerator. |
+| `gpu_preference` | `["nvidia", "intel", "cpu"]` | Order of the accelerators the model may use: the discrete NVIDIA GPU, the integrated Intel GPU and the CPU fallback. The first one that is available and free wins. |
 
 `foq_profile` and the runtime have to agree: `lora` belongs to a runtime that
 was started with `--lora`, `bare` to one without.
+
+`gpu_preference` lists the accelerators in order of preference. `nvidia` is
+the discrete NVIDIA GPU (`gpu0`), `intel` is the integrated Intel GPU through
+the render nodes in `/dev/dri`, and `cpu` is the fallback. The first one that
+is available and not held by another process is used; a foreign process that
+holds the GPU blocks the model. See
+[the guide about the decision model](03-local-decision-model.md).
 
 ## The agents
 

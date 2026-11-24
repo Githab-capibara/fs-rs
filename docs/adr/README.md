@@ -27,6 +27,11 @@ Michael Nygard's: context, decision, consequences, alternatives.
 | [ADR-21](ADR-21-write-the-events-of-a-run-in-one-transaction.md) | Write the events of a run in one transaction | Accepted |
 | [ADR-22](ADR-22-write-the-big-bodies-with-sonic-rs.md) | Write the big bodies with sonic-rs | Accepted |
 
+ADR-08 is not used: the number was skipped when the records were written, and no
+decision was ever taken under it. Nothing links to it, so no decision is lost;
+the gap is deliberate and the index above lists every record that exists on
+disk.
+
 ## How to read an ADR
 
 * **Status** — `Proposed`, `Accepted`, `Deprecated` or `Superseded by ADR-NN`.
