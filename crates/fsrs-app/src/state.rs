@@ -432,11 +432,11 @@ pub fn output_of(event: &RunEvent) -> String {
 pub fn criticality_color(criticality: fsrs_core::Criticality) -> egui::Color32 {
     use fsrs_core::Criticality;
     match criticality {
-        Criticality::Critical => egui::Color32::from_rgb(170, 40, 40),
-        Criticality::High => egui::Color32::from_rgb(180, 80, 30),
-        Criticality::Medium => egui::Color32::from_rgb(150, 100, 30),
-        Criticality::Low => egui::Color32::from_rgb(50, 120, 50),
-        Criticality::Trivial => egui::Color32::from_rgb(90, 90, 100),
+        Criticality::Critical => egui::Color32::from_rgb(110, 35, 35),
+        Criticality::High => egui::Color32::from_rgb(130, 60, 25),
+        Criticality::Medium => egui::Color32::from_rgb(110, 75, 25),
+        Criticality::Low => egui::Color32::from_rgb(40, 90, 40),
+        Criticality::Trivial => egui::Color32::from_rgb(75, 75, 85),
     }
 }
 
@@ -448,11 +448,11 @@ pub fn criticality_color(criticality: fsrs_core::Criticality) -> egui::Color32 {
 pub fn complexity_color(complexity: fsrs_core::Complexity) -> egui::Color32 {
     use fsrs_core::Complexity;
     match complexity {
-        Complexity::Expert => egui::Color32::from_rgb(140, 40, 170),
-        Complexity::Hard => egui::Color32::from_rgb(50, 80, 170),
-        Complexity::Medium => egui::Color32::from_rgb(30, 120, 160),
-        Complexity::Easy => egui::Color32::from_rgb(40, 120, 70),
-        Complexity::Trivial => egui::Color32::from_rgb(90, 90, 100),
+        Complexity::Expert => egui::Color32::from_rgb(100, 30, 120),
+        Complexity::Hard => egui::Color32::from_rgb(40, 60, 130),
+        Complexity::Medium => egui::Color32::from_rgb(25, 90, 120),
+        Complexity::Easy => egui::Color32::from_rgb(30, 90, 55),
+        Complexity::Trivial => egui::Color32::from_rgb(75, 75, 85),
     }
 }
 

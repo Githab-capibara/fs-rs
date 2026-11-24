@@ -58,7 +58,7 @@ const FRAME_PARTS: usize = 6;
 /// be scrolled without knowing the height of every row: the list of the
 /// pending commits of a fork is long, and only the rows that are visible are
 /// drawn.
-const ROW_HEIGHT: f32 = 46.0;
+const ROW_HEIGHT: f32 = 48.0;
 
 /// The height of the row of the names of the columns.
 const HEADER_HEIGHT: f32 = 20.0;
@@ -126,7 +126,7 @@ fn commit_column(ui: &mut egui::Ui, width: f32, name: &str) {
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.set_min_width(width);
-            ui.label(egui::RichText::new(name).strong());
+            ui.label(egui::RichText::new(name));
         },
     );
 }
@@ -1109,11 +1109,11 @@ impl FsrsApp {
         let config_label = config_label.as_str();
 
         egui::Panel::top("header")
-            .min_size(30.0)
+            .min_size(28.0)
             .max_size(80.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("fs-rs");
+                    ui.label(egui::RichText::new("fs-rs").size(16.0));
                     ui.separator();
                     ui.label(format!("Модель: {model}"));
                     ui.separator();
@@ -1123,7 +1123,9 @@ impl FsrsApp {
                     ui.separator();
                     ui.label(egui::RichText::new(config_label).small().monospace());
                     if let Some(error) = error {
-                        ui.colored_label(ui.visuals().error_fg_color, error);
+                        ui.label(
+                            egui::RichText::new(error.clone()).small().weak(),
+                        );
                     }
                 });
             });
@@ -1163,7 +1165,7 @@ impl FsrsApp {
                                     if ui
                                         .selectable_label(
                                             selected,
-                                            egui::RichText::new(name).strong().size(15.0),
+                                            egui::RichText::new(name).size(15.0),
                                         )
                                         .clicked()
                                     {
@@ -1243,7 +1245,7 @@ impl FsrsApp {
             .default_size(620.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading(&title);
+                    ui.label(egui::RichText::new(&title).size(16.0));
                     if let Some(terminal) = self.terminal.as_mut() {
                         if let Some(program_title) = terminal.title() {
                             ui.label(egui::RichText::new(program_title));
@@ -1294,7 +1296,7 @@ impl FsrsApp {
             .default_size(220.0)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.heading("Журнал реализации");
+                    ui.label(egui::RichText::new("Журнал реализации").size(16.0));
                     ui.label(format!("событий: {count}"));
                 });
                 ui.separator();
@@ -1302,7 +1304,7 @@ impl FsrsApp {
                     for entry in log.iter_mut() {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(entry.time()).small().monospace());
-                            ui.label(egui::RichText::new(entry.role_label()).strong());
+                            ui.label(egui::RichText::new(entry.role_label()));
                             ui.label(entry.summary());
                         });
                         if !entry.prompt().is_empty() {
@@ -1336,7 +1338,7 @@ impl FsrsApp {
                 ui.centered_and_justified(|ui| {
                     ui.vertical_centered(|ui| {
                         ui.label("Выберите репозиторий");
-                        ui.label(egui::RichText::new("Кликните карточку репозитория в полосе выше.").weak());
+                        ui.label(egui::RichText::new("Кликните карточку репозитория в полосе выше").weak());
                     });
                 });
             });
@@ -1348,7 +1350,7 @@ impl FsrsApp {
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading(format!("{title} — коммиты ({count})"));
+                ui.label(egui::RichText::new(format!("{title} — коммиты ({count})")).size(16.0));
             });
             ui.separator();
 
@@ -1450,7 +1452,7 @@ impl FsrsApp {
                         if ui
                             .selectable_label(
                                 selected,
-                                egui::RichText::new(&commit.summary).strong(),
+                                egui::RichText::new(&commit.summary),
                             )
                             .clicked()
                         {
@@ -1495,7 +1497,7 @@ impl FsrsApp {
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
                         ui.set_min_width(columns.action);
-                        if ui.button("РЕАЛИЗОВАТЬ").clicked() {
+                        if ui.button("Реализовать").clicked() {
                             actions.push(Action::Implement {
                                 repo,
                                 sha: commit.sha.clone(),
@@ -1598,15 +1600,13 @@ enum PickerOutcome {
 
 /// Draw a coloured badge with one letter.
 fn badge(ui: &mut egui::Ui, letter: &str, color: egui::Color32) {
-    egui::Frame::group(ui.style())
+    egui::Frame::default()
         .fill(color)
-        .corner_radius(4.0)
+        .corner_radius(8.0)
         .inner_margin(egui::Margin::symmetric(6, 2))
         .show(ui, |ui| {
             ui.label(
-                egui::RichText::new(letter)
-                    .strong()
-                    .color(egui::Color32::WHITE),
+                egui::RichText::new(letter).color(egui::Color32::WHITE),
             );
         });
 }

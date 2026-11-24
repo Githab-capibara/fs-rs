@@ -9,7 +9,7 @@
 //! * the window shows the tracked repository, the missing commits and the
 //!   button that starts an implementation,
 //! * clicking a commit asks which model the terminal should use,
-//! * clicking `РЕАЛИЗОВАТЬ` runs the whole three-agent pipeline against the
+//! * clicking `Реализовать` runs the whole three-agent pipeline against the
 //!   mock agent and merges the result into the main branch.
 //!
 //! The dashboard talks to three programs: the local decision model, the
@@ -494,7 +494,7 @@ fn the_window_shows_the_repository_and_its_missing_commits() {
 
     // The button that starts the implementation is there.
     assert!(
-        harness.query_by_label("РЕАЛИЗОВАТЬ").is_some(),
+        harness.query_by_label("Реализовать").is_some(),
         "the button should be shown"
     );
 }
@@ -518,7 +518,7 @@ fn the_table_of_the_commits_draws_only_the_visible_rows() {
 
     // Every visible row has a button, and there are far fewer of them than
     // there are commits.
-    let drawn = harness.query_all_by_label("РЕАЛИЗОВАТЬ").count();
+    let drawn = harness.query_all_by_label("Реализовать").count();
     assert!(drawn > 0, "the visible rows should be drawn");
     assert!(
         drawn < 30,
@@ -543,7 +543,7 @@ fn the_table_of_the_commits_draws_only_the_visible_rows() {
             reached = true;
             break;
         }
-        let Some(node) = harness.query_all_by_label("РЕАЛИЗОВАТЬ").next() else {
+        let Some(node) = harness.query_all_by_label("Реализовать").next() else {
             break;
         };
         node.scroll_down();
@@ -650,7 +650,7 @@ fn the_pipeline_ports_the_commit_and_merges_it_into_the_main_branch() {
 
     // The button starts the pipeline. The model is not known yet, so the
     // dashboard asks for it first.
-    harness.get_by_label("РЕАЛИЗОВАТЬ").click();
+    harness.get_by_label("Реализовать").click();
     harness.step();
 
     let picker = harness
@@ -720,7 +720,7 @@ fn the_picker_offers_the_models_of_the_agent() {
     let mut harness = window(&fixture);
     wait_for_commits(&mut harness);
 
-    harness.get_by_label("РЕАЛИЗОВАТЬ").click();
+    harness.get_by_label("Реализовать").click();
     harness.step();
 
     // The mock agent is asked for its models in the background.
@@ -823,7 +823,7 @@ fn the_window_survives_a_missing_agent() {
         });
     wait_for_commits(&mut harness);
 
-    harness.get_by_label("РЕАЛИЗОВАТЬ").click();
+    harness.get_by_label("Реализовать").click();
     harness.step();
 
     // The picker opens and reports that the agent is not there.
