@@ -24,3 +24,7 @@
 # The bytecode of the Python verification script.
 __pycache__/
 *.pyc
+
+# The working directories of the swarm service.
+.dsh/
+.dsh-swarm/
